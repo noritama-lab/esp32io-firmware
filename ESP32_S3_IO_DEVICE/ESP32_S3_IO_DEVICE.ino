@@ -21,6 +21,9 @@ const int PWM_PINS[2] = {38, 39};
 const int PWM_FREQ = 5000;  // 5kHz
 const int PWM_RES  = 8;     // 8bit
 
+// PWM duty の保持（get_io_state 用）
+int PWM_DUTY[2] = {0, 0};
+
 // ------------------------------------------------------------
 // PIN_ID が範囲内かチェック
 // ------------------------------------------------------------
@@ -41,10 +44,10 @@ int readADC(int gpio) {
 }
 
 // ------------------------------------------------------------
-// エラー応答（統一形式）
+// エラー応答（エラーコードは ERR_XXXX で統一）
 // ------------------------------------------------------------
 void sendError(const char* code, const char* detail) {
-    StaticJsonDocument<256> res;
+    StaticJsonDocument<256> res;  // 256 bytes: error JSON に十分
     res["status"] = "error";
     res["code"] = code;
     res["detail"] = detail;
@@ -69,10 +72,11 @@ void setup() {
         digitalWrite(DIO_OUT_PINS[i], LOW);
     }
 
-    // PWM 初期化（pin ベース API）
+    // PWM 初期化
     for (int i = 0; i < 2; i++) {
         ledcAttach(PWM_PINS[i], PWM_FREQ, PWM_RES);
         ledcWrite(PWM_PINS[i], 0);
+        PWM_DUTY[i] = 0;
     }
 }
 
@@ -80,24 +84,31 @@ void setup() {
 // メインループ
 // ------------------------------------------------------------
 void loop() {
-    yield();  // 安定性向上
+    yield();
 
     if (!Serial.available()) return;
 
     String line = Serial.readStringUntil('\n');
+    line.trim();  // 改行・空白除去で堅牢性アップ
 
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<512> doc;  // 512 bytes: 最大コマンド JSON に十分
     auto err = deserializeJson(doc, line);
     if (err) {
-        sendError("JSON_PARSE_ERROR", "invalid json format");
+        sendError("ERR_JSON_PARSE", err.c_str());
+        return;
+    }
+
+    // cmd が存在し、文字列であることを保証
+    if (!doc.containsKey("cmd")) {
+        sendError("ERR_MISSING_CMD", "cmd field is required");
+        return;
+    }
+    if (!doc["cmd"].is<const char*>()) {
+        sendError("ERR_INVALID_CMD_TYPE", "cmd must be a string");
         return;
     }
 
     const char* cmd = doc["cmd"];
-    if (!cmd) {
-        sendError("MISSING_CMD", "cmd field is required");
-        return;
-    }
 
     // ------------------------------------------------------------
     // help
@@ -112,6 +123,7 @@ void loop() {
         arr.add("read_adc");
         arr.add("set_pwm");
         arr.add("get_status");
+        arr.add("get_io_state");
         arr.add("ping");
         arr.add("help");
 
@@ -123,46 +135,46 @@ void loop() {
     // get_status
     // ------------------------------------------------------------
     else if (strcmp(cmd, "get_status") == 0) {
-        StaticJsonDocument<512> res;
+        StaticJsonDocument<256> res;
         res["status"] = "ok";
-
-        // DI
-        JsonArray di = res.createNestedArray("dio_in");
-        for (int i = 0; i < 6; i++) {
-            di.add(digitalRead(DIO_IN_PINS[i]));
-        }
-
-        // DO
-        JsonArray doo = res.createNestedArray("dio_out");
-        for (int i = 0; i < 6; i++) {
-            doo.add(digitalRead(DIO_OUT_PINS[i]));
-        }
-
-        // ADC
-        JsonArray adc = res.createNestedArray("adc");
-        for (int i = 0; i < 2; i++) {
-            adc.add(readADC(ADC_PINS[i]));
-        }
-
-        // PWM（duty は保持していないため 0 を返す）
-        JsonArray pwm = res.createNestedArray("pwm");
-        for (int i = 0; i < 2; i++) {
-            pwm.add(0);
-        }
+        res["uptime_ms"] = millis();
+        res["free_heap"] = esp_get_free_heap_size();
 
         serializeJson(res, Serial);
         Serial.println();
     }
 
     // ------------------------------------------------------------
-    // デジタル入力 read_dio
-    // {"cmd":"read_dio","pin_id":0}
+    // get_io_state
+    // ------------------------------------------------------------
+    else if (strcmp(cmd, "get_io_state") == 0) {
+        StaticJsonDocument<512> res;
+        res["status"] = "ok";
+
+        JsonArray di = res.createNestedArray("dio_in");
+        for (int i = 0; i < 6; i++) di.add(digitalRead(DIO_IN_PINS[i]));
+
+        JsonArray doo = res.createNestedArray("dio_out");
+        for (int i = 0; i < 6; i++) doo.add(digitalRead(DIO_OUT_PINS[i]));
+
+        JsonArray adc = res.createNestedArray("adc");
+        for (int i = 0; i < 2; i++) adc.add(readADC(ADC_PINS[i]));
+
+        JsonArray pwm = res.createNestedArray("pwm");
+        for (int i = 0; i < 2; i++) pwm.add(PWM_DUTY[i]);
+
+        serializeJson(res, Serial);
+        Serial.println();
+    }
+
+    // ------------------------------------------------------------
+    // read_dio
     // ------------------------------------------------------------
     else if (strcmp(cmd, "read_dio") == 0) {
         int PIN_ID = doc["pin_id"];
 
         if (!checkRange(PIN_ID, 6)) {
-            sendError("INVALID_DIO_IN_PIN_ID", "pin_id must be 0-5");
+            sendError("ERR_INVALID_DIO_IN_PIN_ID", "pin_id must be 0-5");
             return;
         }
 
@@ -177,33 +189,39 @@ void loop() {
     }
 
     // ------------------------------------------------------------
-    // デジタル出力 write_dio
-    // {"cmd":"write_dio","pin_id":3,"value":1}
+    // write_dio
     // ------------------------------------------------------------
     else if (strcmp(cmd, "write_dio") == 0) {
         int PIN_ID = doc["pin_id"];
         int value = doc["value"];
 
         if (!checkRange(PIN_ID, 6)) {
-            sendError("INVALID_DIO_OUT_PIN_ID", "pin_id must be 0-5");
+            sendError("ERR_INVALID_DIO_OUT_PIN_ID", "pin_id must be 0-5");
+            return;
+        }
+
+        if (!(value == 0 || value == 1)) {
+            sendError("ERR_INVALID_VALUE", "value must be 0 or 1");
             return;
         }
 
         int gpio = DIO_OUT_PINS[PIN_ID];
         digitalWrite(gpio, value ? HIGH : LOW);
 
-        Serial.println("{\"status\":\"ok\"}");
+        StaticJsonDocument<128> res;
+        res["status"] = "ok";
+        serializeJson(res, Serial);
+        Serial.println();
     }
 
     // ------------------------------------------------------------
-    // ADC 読み取り read_adc
-    // {"cmd":"read_adc","pin_id":1}
+    // read_adc
     // ------------------------------------------------------------
     else if (strcmp(cmd, "read_adc") == 0) {
         int PIN_ID = doc["pin_id"];
 
         if (!checkRange(PIN_ID, 2)) {
-            sendError("INVALID_ADC_PIN_ID", "pin_id must be 0-1");
+            sendError("ERR_INVALID_ADC_PIN_ID", "pin_id must be 0-1");
             return;
         }
 
@@ -218,15 +236,14 @@ void loop() {
     }
 
     // ------------------------------------------------------------
-    // PWM 出力 set_pwm
-    // {"cmd":"set_pwm","pin_id":0,"duty":128}
+    // set_pwm
     // ------------------------------------------------------------
     else if (strcmp(cmd, "set_pwm") == 0) {
         int PIN_ID = doc["pin_id"];
         int duty = doc["duty"];
 
         if (!checkRange(PIN_ID, 2)) {
-            sendError("INVALID_PWM_PIN_ID", "pin_id must be 0-1");
+            sendError("ERR_INVALID_PWM_PIN_ID", "pin_id must be 0-1");
             return;
         }
 
@@ -234,21 +251,29 @@ void loop() {
 
         int gpio = PWM_PINS[PIN_ID];
         ledcWrite(gpio, duty);
+        PWM_DUTY[PIN_ID] = duty;
 
-        Serial.println("{\"status\":\"ok\"}");
+        StaticJsonDocument<128> res;
+        res["status"] = "ok";
+        serializeJson(res, Serial);
+        Serial.println();
     }
 
     // ------------------------------------------------------------
     // ping
     // ------------------------------------------------------------
     else if (strcmp(cmd, "ping") == 0) {
-        Serial.println("{\"status\":\"ok\",\"message\":\"pong\"}");
+        StaticJsonDocument<128> res;
+        res["status"] = "ok";
+        res["message"] = "pong";
+        serializeJson(res, Serial);
+        Serial.println();
     }
 
     // ------------------------------------------------------------
     // 不明コマンド
     // ------------------------------------------------------------
     else {
-        sendError("UNKNOWN_COMMAND", "command not recognized");
+        sendError("ERR_UNKNOWN_COMMAND", "command not recognized");
     }
 }
