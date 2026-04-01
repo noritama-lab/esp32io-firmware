@@ -37,8 +37,8 @@ ESP32‑S3 は USB CDC を通じて PC と通信し、Python API から送られ
 
 ### 主なコマンド
 
-- read_dio — デジタル入力  
-- write_dio — デジタル出力  
+- read_di — デジタル入力  
+- set_do — デジタル出力  
 - read_adc — ADC 読み取り  
 - set_pwm — PWM 出力  
 - get_io_state — 全 I/O 状態の取得  
@@ -123,8 +123,8 @@ It receives JSON commands from the Python API, processes them, and controls the 
 
 ### Main Commands
 
-- read_dio — Digital input
-- write_dio — Digital output
+- read_di — Digital input
+- set_do — Digital output
 - read_adc — Read ADC
 - set_pwm — PWM output
 - get_io_state — Get all I/O states

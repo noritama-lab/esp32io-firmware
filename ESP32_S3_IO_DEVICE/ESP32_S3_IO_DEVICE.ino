@@ -120,8 +120,8 @@ void loop() {
         StaticJsonDocument<256> res;
         res["status"] = "ok";
         JsonArray arr = res.createNestedArray("commands");
-        arr.add("read_dio");
-        arr.add("write_dio");
+        arr.add("read_di");
+        arr.add("set_do");
         arr.add("read_adc");
         arr.add("set_pwm");
         arr.add("get_status");
@@ -164,7 +164,7 @@ void loop() {
     }
 
     // ------------------------------------------------------------
-    else if (strcmp(cmd, "read_dio") == 0) {
+    else if (strcmp(cmd, "read_di") == 0) {
         int id = doc["pin_id"];
         if (!checkRange(id, 6)) {
             sendError(cmd, "ERR_INVALID_DIO_IN_PIN_ID", "pin_id must be 0-5");
@@ -181,7 +181,7 @@ void loop() {
     }
 
     // ------------------------------------------------------------
-    else if (strcmp(cmd, "write_dio") == 0) {
+    else if (strcmp(cmd, "set_do") == 0) {
         int id = doc["pin_id"];
         int value = doc["value"];
 
