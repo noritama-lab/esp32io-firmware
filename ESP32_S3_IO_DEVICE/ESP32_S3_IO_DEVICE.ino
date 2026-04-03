@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <Preferences.h>
 
 // ------------------------------------------------------------
 // 固定ピンマッピング
@@ -9,10 +10,15 @@ const int DIO_OUT_PINS[6] = {10, 11, 12, 13, 14, 15};
 const int ADC_PINS[2]     = {1, 2};
 const int PWM_PINS[2]     = {38, 39};
 
-const int PWM_FREQ = 5000;
-const int PWM_RES  = 8;
+// デフォルト PWM 設定
+const int DEFAULT_PWM_FREQ = 5000;
+const int DEFAULT_PWM_RES  = 8;
 
+int PWM_FREQ = DEFAULT_PWM_FREQ;
+int PWM_RES  = DEFAULT_PWM_RES;
 int PWM_DUTY[2] = {0, 0};
+
+Preferences prefs;
 
 // ------------------------------------------------------------
 // PIN_ID 範囲チェック
@@ -34,7 +40,7 @@ int readADC(int gpio) {
 }
 
 // ------------------------------------------------------------
-// エラー応答（cmd を含める）
+// エラー応答
 // ------------------------------------------------------------
 void sendError(const char* cmd, const char* code, const char* detail) {
     StaticJsonDocument<192> res;
@@ -65,11 +71,43 @@ bool readLine(String& out) {
 }
 
 // ------------------------------------------------------------
+// PWM 設定の保存・読み込み
+// ------------------------------------------------------------
+int loadPWMFreq() {
+    prefs.begin("esp32io", true);
+    int v = prefs.getInt("pwm_freq", DEFAULT_PWM_FREQ);
+    prefs.end();
+    return v;
+}
+
+int loadPWMRes() {
+    prefs.begin("esp32io", true);
+    int v = prefs.getInt("pwm_res", DEFAULT_PWM_RES);
+    prefs.end();
+    return v;
+}
+
+void savePWMFreq(int v) {
+    prefs.begin("esp32io", false);
+    prefs.putInt("pwm_freq", v);
+    prefs.end();
+}
+
+void savePWMRes(int v) {
+    prefs.begin("esp32io", false);
+    prefs.putInt("pwm_res", v);
+    prefs.end();
+}
+
+// ------------------------------------------------------------
 // 初期化
 // ------------------------------------------------------------
 void setup() {
     Serial.begin(115200);
     delay(100);
+
+    PWM_FREQ = loadPWMFreq();
+    PWM_RES  = loadPWMRes();
 
     for (int i = 0; i < 6; i++) {
         pinMode(DIO_IN_PINS[i], INPUT);
@@ -78,7 +116,7 @@ void setup() {
     }
 
     for (int i = 0; i < 2; i++) {
-        ledcAttach(PWM_PINS[i], PWM_FREQ, PWM_RES);  // 最新 API（pin 指定）
+        ledcAttach(PWM_PINS[i], PWM_FREQ, PWM_RES);
         ledcWrite(PWM_PINS[i], 0);
         PWM_DUTY[i] = 0;
     }
@@ -126,6 +164,8 @@ void loop() {
         arr.add("set_pwm");
         arr.add("get_status");
         arr.add("get_io_state");
+        arr.add("get_pwm_config");
+        arr.add("set_pwm_config");
         arr.add("ping");
         arr.add("help");
         serializeJson(res, Serial);
@@ -236,6 +276,56 @@ void loop() {
         StaticJsonDocument<96> res;
         res["status"] = "ok";
         serializeJson(res, Serial);
+        Serial.println();
+    }
+
+    // ------------------------------------------------------------
+    else if (strcmp(cmd, "get_pwm_config") == 0) {
+        StaticJsonDocument<128> res;
+        res["status"] = "ok";
+        res["freq"] = PWM_FREQ;
+        res["res"]  = PWM_RES;
+        serializeJson(res, Serial);
+        Serial.println();
+    }
+
+    // ------------------------------------------------------------
+    else if (strcmp(cmd, "set_pwm_config") == 0) {
+        if (!doc.containsKey("freq") || !doc.containsKey("res")) {
+            sendError(cmd, "ERR_MISSING_PARAM", "freq and res are required");
+            return;
+        }
+
+        int freq = doc["freq"];
+        int res  = doc["res"];
+
+        if (freq < 1 || freq > 20000) {
+            sendError(cmd, "ERR_INVALID_FREQ", "freq must be 1-20000");
+            return;
+        }
+
+        if (res < 1 || res > 16) {
+            sendError(cmd, "ERR_INVALID_RES", "res must be 1-16");
+            return;
+        }
+
+        savePWMFreq(freq);
+        savePWMRes(res);
+
+        PWM_FREQ = freq;
+        PWM_RES  = res;
+
+        for (int i = 0; i < 2; i++) {
+            ledcAttach(PWM_PINS[i], PWM_FREQ, PWM_RES);
+            ledcWrite(PWM_PINS[i], 0);
+            PWM_DUTY[i] = 0;
+        }
+
+        StaticJsonDocument<128> resdoc;
+        resdoc["status"] = "ok";
+        resdoc["freq"] = freq;
+        resdoc["res"]  = res;
+        serializeJson(resdoc, Serial);
         Serial.println();
     }
 
