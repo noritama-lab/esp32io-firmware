@@ -20,6 +20,46 @@ int PWM_DUTY[2] = {0, 0};
 
 Preferences prefs;
 
+int pwmMaxDuty() {
+    return (1UL << PWM_RES) - 1;
+}
+
+int pwmSafeMaxDuty() {
+    int maxDuty = pwmMaxDuty();
+    if (PWM_RES >= 14 && maxDuty > 0) {
+        return maxDuty - 1;
+    }
+    return maxDuty;
+}
+
+int scaleDuty(int duty, int oldMax, int newMax) {
+    if (oldMax <= 0) return 0;
+    return (static_cast<long>(duty) * newMax) / oldMax;
+}
+
+bool applyPWMConfig(bool resetDuty = false) {
+    int maxDuty = pwmSafeMaxDuty();
+    bool okAll = true;
+
+    for (int i = 0; i < 2; i++) {
+        // 既存の PWM 設定が残っていると res/freq が切り替わらないことがあるため、
+        // 一度デタッチしてから再アタッチする。
+        ledcDetach(PWM_PINS[i]);
+        bool ok = ledcAttach(PWM_PINS[i], PWM_FREQ, PWM_RES);
+        if (!ok) {
+            okAll = false;
+            Serial.printf("PWM attach failed: pin=%d freq=%d res=%d\n", PWM_PINS[i], PWM_FREQ, PWM_RES);
+            continue;
+        }
+
+        if (resetDuty) PWM_DUTY[i] = 0;
+        PWM_DUTY[i] = constrain(PWM_DUTY[i], 0, maxDuty);
+        ledcWrite(PWM_PINS[i], PWM_DUTY[i]);
+    }
+
+    return okAll;
+}
+
 // ------------------------------------------------------------
 // PIN_ID 範囲チェック
 // ------------------------------------------------------------
@@ -115,11 +155,7 @@ void setup() {
         digitalWrite(DIO_OUT_PINS[i], LOW);
     }
 
-    for (int i = 0; i < 2; i++) {
-        ledcAttach(PWM_PINS[i], PWM_FREQ, PWM_RES);
-        ledcWrite(PWM_PINS[i], 0);
-        PWM_DUTY[i] = 0;
-    }
+    applyPWMConfig(true);
 }
 
 // ------------------------------------------------------------
@@ -269,12 +305,14 @@ void loop() {
             return;
         }
 
-        duty = constrain(duty, 0, 255);
+        duty = constrain(duty, 0, pwmSafeMaxDuty());
         ledcWrite(PWM_PINS[id], duty);
         PWM_DUTY[id] = duty;
 
-        StaticJsonDocument<96> res;
+        StaticJsonDocument<128> res;
         res["status"] = "ok";
+        res["duty"] = duty;
+        res["max_duty"] = pwmSafeMaxDuty();
         serializeJson(res, Serial);
         Serial.println();
     }
@@ -304,27 +342,43 @@ void loop() {
             return;
         }
 
-        if (res < 1 || res > 16) {
-            sendError(cmd, "ERR_INVALID_RES", "res must be 1-16");
+        if (res < 1 || res > 14) {
+            sendError(cmd, "ERR_INVALID_RES", "res must be 1-14");
+            return;
+        }
+
+        int oldFreq = PWM_FREQ;
+        int oldRes  = PWM_RES;
+        int oldMax = pwmMaxDuty();
+        int oldDuty[2] = {PWM_DUTY[0], PWM_DUTY[1]};
+
+        PWM_FREQ = freq;
+        PWM_RES  = res;
+
+        int newMax = pwmMaxDuty();
+        for (int i = 0; i < 2; i++) {
+            PWM_DUTY[i] = scaleDuty(PWM_DUTY[i], oldMax, newMax);
+        }
+
+        if (!applyPWMConfig(false)) {
+            PWM_FREQ = oldFreq;
+            PWM_RES  = oldRes;
+            for (int i = 0; i < 2; i++) {
+                PWM_DUTY[i] = oldDuty[i];
+            }
+            applyPWMConfig(false);
+            sendError(cmd, "ERR_PWM_ATTACH", "failed to apply PWM frequency/resolution");
             return;
         }
 
         savePWMFreq(freq);
         savePWMRes(res);
 
-        PWM_FREQ = freq;
-        PWM_RES  = res;
-
-        for (int i = 0; i < 2; i++) {
-            ledcAttach(PWM_PINS[i], PWM_FREQ, PWM_RES);
-            ledcWrite(PWM_PINS[i], 0);
-            PWM_DUTY[i] = 0;
-        }
-
-        StaticJsonDocument<128> resdoc;
+        StaticJsonDocument<160> resdoc;
         resdoc["status"] = "ok";
         resdoc["freq"] = freq;
         resdoc["res"]  = res;
+        resdoc["max_duty"] = pwmSafeMaxDuty();
         serializeJson(resdoc, Serial);
         Serial.println();
     }
