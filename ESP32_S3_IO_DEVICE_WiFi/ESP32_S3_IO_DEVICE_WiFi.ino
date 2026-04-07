@@ -10,9 +10,9 @@
 const int RESET_PIN = 0;  // BOOT ボタン
 
 // ------------------------------------------------------------
-// LED 状態表示（GPIO38）
+// LED 状態表示（GPIO21 / 外部LED）d
 // ------------------------------------------------------------
-const int LED_PIN = 38;  // BUILTIN_LED（逆論理：LOW=点灯）
+const int LED_PIN = 21;  // 外部LED用ピン（220-1kΩの直列抵抗を推奨）
 
 enum LedState {
     LED_WIFI_CONNECTING,
@@ -36,13 +36,13 @@ void updateLed() {
             if (now - ledTimer > 200) {
                 ledTimer = now;
                 ledOn = !ledOn;
-                digitalWrite(LED_PIN, ledOn ? LOW : HIGH);
+                digitalWrite(LED_PIN, ledOn ? HIGH : LOW);
             }
             break;
 
         // 点灯しっぱなし
         case LED_WIFI_OK:
-            digitalWrite(LED_PIN, LOW);
+            digitalWrite(LED_PIN, HIGH);
             break;
 
         // 2回点滅 → 休止 → 2回点滅…
@@ -52,10 +52,10 @@ void updateLed() {
 
                 if (blinkCount < 4) {
                     ledOn = !ledOn;
-                    digitalWrite(LED_PIN, ledOn ? LOW : HIGH);
+                    digitalWrite(LED_PIN, ledOn ? HIGH : LOW);
                     blinkCount++;
                 } else {
-                    digitalWrite(LED_PIN, HIGH); // 消灯
+                    digitalWrite(LED_PIN, LOW); // 消灯
                     if (now - ledTimer > 800) {
                         blinkCount = 0;
                     }
@@ -78,11 +78,19 @@ String gwStr   = "192.168.1.1";
 String ssid = "";
 String pass = "";
 
+unsigned long lastWiFiCheckMs = 0;
+unsigned long lastWiFiReconnectMs = 0;
+const unsigned long WIFI_CHECK_INTERVAL_MS = 1000;
+const unsigned long WIFI_RECONNECT_INTERVAL_MS = 5000;
+
 // ------------------------------------------------------------
 // PWM 設定（初期値）
 // ------------------------------------------------------------
-int PWM_FREQ = 5000;
-int PWM_RES  = 8;
+const int DEFAULT_PWM_FREQ = 5000;
+const int DEFAULT_PWM_RES  = 8;
+
+int PWM_FREQ = DEFAULT_PWM_FREQ;
+int PWM_RES  = DEFAULT_PWM_RES;
 
 // ------------------------------------------------------------
 // 固定ピンマッピング（元コード）
@@ -118,12 +126,9 @@ button { margin-top: 10px; }
 <body>
 <h1>ESP32-S3 Control Panel</h1>
 
-<h2>PWM Settings</h2>
-<label>Frequency:</label><input id="freq" type="number"><br>
-<label>Resolution:</label><input id="res" type="number"><br>
-<button onclick="setPWM()">Apply PWM</button>
-
 <h2>Network Settings</h2>
+<label>Wi-Fi SSID:</label><input id="ssid"><br>
+<label>Wi-Fi Password:</label><input id="pass" type="password"><br>
 <label>Mode:</label>
 <select id="dhcp">
   <option value="1">DHCP</option>
@@ -141,8 +146,8 @@ button { margin-top: 10px; }
 <script>
 function loadConfig() {
   fetch('/api/get_config').then(r=>r.json()).then(cfg=>{
-    document.getElementById('freq').value = cfg.pwm_freq;
-    document.getElementById('res').value  = cfg.pwm_res;
+        document.getElementById('ssid').value = cfg.ssid || '';
+        document.getElementById('pass').value = cfg.pass || '';
     document.getElementById('dhcp').value = cfg.dhcp ? 1 : 0;
     document.getElementById('ip').value   = cfg.ip;
     document.getElementById('mask').value = cfg.mask;
@@ -150,16 +155,10 @@ function loadConfig() {
   });
 }
 
-function setPWM() {
-  let data = {
-    freq: parseInt(document.getElementById('freq').value),
-    res:  parseInt(document.getElementById('res').value)
-  };
-  fetch('/api/set_pwm_config', {method:'POST', body:JSON.stringify(data)});
-}
-
 function setNet() {
   let data = {
+        ssid: document.getElementById('ssid').value,
+        pass: document.getElementById('pass').value,
     dhcp: document.getElementById('dhcp').value == "1",
     ip:   document.getElementById('ip').value,
     mask: document.getElementById('mask').value,
@@ -204,6 +203,47 @@ void checkResetButton() {
 }
 
 // ------------------------------------------------------------
+// PWM ユーティリティ
+// ------------------------------------------------------------
+int pwmMaxDuty() {
+    return (1UL << PWM_RES) - 1;
+}
+
+int pwmSafeMaxDuty() {
+    int maxDuty = pwmMaxDuty();
+    if (PWM_RES >= 14 && maxDuty > 0) {
+        return maxDuty - 1;
+    }
+    return maxDuty;
+}
+
+int scaleDuty(int duty, int oldMax, int newMax) {
+    if (oldMax <= 0) return 0;
+    return (static_cast<long>(duty) * newMax) / oldMax;
+}
+
+bool applyPWMConfig(bool resetDuty = false) {
+    int maxDuty = pwmSafeMaxDuty();
+    bool okAll = true;
+
+    for (int i = 0; i < 2; i++) {
+        ledcDetach(PWM_PINS[i]);
+        bool ok = ledcAttach(PWM_PINS[i], PWM_FREQ, PWM_RES);
+        if (!ok) {
+            okAll = false;
+            Serial.printf("PWM attach failed: pin=%d freq=%d res=%d\n", PWM_PINS[i], PWM_FREQ, PWM_RES);
+            continue;
+        }
+
+        if (resetDuty) PWM_DUTY[i] = 0;
+        PWM_DUTY[i] = constrain(PWM_DUTY[i], 0, maxDuty);
+        ledcWrite(PWM_PINS[i], PWM_DUTY[i]);
+    }
+
+    return okAll;
+}
+
+// ------------------------------------------------------------
 // PIN_ID 範囲チェック（元コード）
 // ------------------------------------------------------------
 bool checkRange(int id, int max) {
@@ -223,32 +263,36 @@ int readADC(int gpio) {
 }
 
 // ------------------------------------------------------------
-// JSON エラー応答（元コード）
+// JSON エラー応答
 // ------------------------------------------------------------
-void sendError(const char* cmd, const char* code, const char* detail) {
+void buildErrorJson(const char* cmd, const char* code, const char* detail, String& out) {
     StaticJsonDocument<192> res;
     res["status"] = "error";
     res["cmd"]    = cmd;
     res["code"]   = code;
     res["detail"] = detail;
-    serializeJson(res, Serial);
-    Serial.println();
+    serializeJson(res, out);
 }
 
 // ------------------------------------------------------------
-// JSON コマンド処理（元コード）
+// JSON コマンド処理（Serial / WebSocket 共通）
 // ------------------------------------------------------------
-void processJson(const String& line) {
+bool processJson(const String& line, String& out) {
     StaticJsonDocument<384> doc;
     auto err = deserializeJson(doc, line);
     if (err) {
-        sendError("unknown", "ERR_JSON_PARSE", err.c_str());
-        return;
+        buildErrorJson("unknown", "ERR_JSON_PARSE", err.c_str(), out);
+        return false;
     }
 
     if (!doc.containsKey("cmd")) {
-        sendError("unknown", "ERR_MISSING_CMD", "cmd field is required");
-        return;
+        buildErrorJson("unknown", "ERR_MISSING_CMD", "cmd field is required", out);
+        return false;
+    }
+
+    if (!doc["cmd"].is<const char*>()) {
+        buildErrorJson("unknown", "ERR_INVALID_CMD_TYPE", "cmd must be a string", out);
+        return false;
     }
 
     const char* cmd = doc["cmd"];
@@ -258,22 +302,26 @@ void processJson(const String& line) {
         StaticJsonDocument<256> res;
         res["status"] = "ok";
         JsonArray arr = res.createNestedArray("commands");
-        arr.add("read_dio");
-        arr.add("write_dio");
+        arr.add("read_di");
+        arr.add("set_do");
         arr.add("read_adc");
         arr.add("set_pwm");
         arr.add("get_status");
         arr.add("get_io_state");
+        arr.add("get_pwm_config");
+        arr.add("set_pwm_config");
         arr.add("ping");
         arr.add("help");
-        serializeJson(res, Serial); Serial.println();
+        serializeJson(res, out);
+        return true;
     }
     else if (strcmp(cmd, "get_status") == 0) {
         StaticJsonDocument<192> res;
         res["status"] = "ok";
         res["uptime_ms"] = millis();
         res["free_heap"] = esp_get_free_heap_size();
-        serializeJson(res, Serial); Serial.println();
+        serializeJson(res, out);
+        return true;
     }
     else if (strcmp(cmd, "get_io_state") == 0) {
         StaticJsonDocument<384> res;
@@ -291,67 +339,140 @@ void processJson(const String& line) {
         JsonArray pwm = res.createNestedArray("pwm");
         for (int i = 0; i < 2; i++) pwm.add(PWM_DUTY[i]);
 
-        serializeJson(res, Serial); Serial.println();
+        serializeJson(res, out);
+        return true;
     }
-    else if (strcmp(cmd, "read_dio") == 0) {
+    else if (strcmp(cmd, "read_di") == 0) {
         int id = doc["pin_id"];
         if (!checkRange(id, 6)) {
-            sendError(cmd, "ERR_INVALID_DIO_IN_PIN_ID", "pin_id must be 0-5");
-            return;
+            buildErrorJson(cmd, "ERR_INVALID_DIO_IN_PIN_ID", "pin_id must be 0-5", out);
+            return false;
         }
         int value = digitalRead(DIO_IN_PINS[id]);
         StaticJsonDocument<128> res;
         res["status"] = "ok";
         res["value"] = value;
-        serializeJson(res, Serial); Serial.println();
+        serializeJson(res, out);
+        return true;
     }
-    else if (strcmp(cmd, "write_dio") == 0) {
+    else if (strcmp(cmd, "set_do") == 0) {
         int id = doc["pin_id"];
         int value = doc["value"];
         if (!checkRange(id, 6)) {
-            sendError(cmd, "ERR_INVALID_DIO_OUT_PIN_ID", "pin_id must be 0-5");
-            return;
+            buildErrorJson(cmd, "ERR_INVALID_DIO_OUT_PIN_ID", "pin_id must be 0-5", out);
+            return false;
+        }
+        if (!(value == 0 || value == 1)) {
+            buildErrorJson(cmd, "ERR_INVALID_VALUE", "value must be 0 or 1", out);
+            return false;
         }
         digitalWrite(DIO_OUT_PINS[id], value ? HIGH : LOW);
         StaticJsonDocument<96> res;
         res["status"] = "ok";
-        serializeJson(res, Serial); Serial.println();
+        serializeJson(res, out);
+        return true;
     }
     else if (strcmp(cmd, "read_adc") == 0) {
         int id = doc["pin_id"];
         if (!checkRange(id, 2)) {
-            sendError(cmd, "ERR_INVALID_ADC_PIN_ID", "pin_id must be 0-1");
-            return;
+            buildErrorJson(cmd, "ERR_INVALID_ADC_PIN_ID", "pin_id must be 0-1", out);
+            return false;
         }
         int value = readADC(ADC_PINS[id]);
         StaticJsonDocument<128> res;
         res["status"] = "ok";
         res["value"] = value;
-        serializeJson(res, Serial); Serial.println();
+        serializeJson(res, out);
+        return true;
     }
     else if (strcmp(cmd, "set_pwm") == 0) {
         int id = doc["pin_id"];
         int duty = doc["duty"];
         if (!checkRange(id, 2)) {
-            sendError(cmd, "ERR_INVALID_PWM_PIN_ID", "pin_id must be 0-1");
-            return;
+            buildErrorJson(cmd, "ERR_INVALID_PWM_PIN_ID", "pin_id must be 0-1", out);
+            return false;
         }
-        duty = constrain(duty, 0, 255);
+        duty = constrain(duty, 0, pwmSafeMaxDuty());
         ledcWrite(PWM_PINS[id], duty);
         PWM_DUTY[id] = duty;
-        StaticJsonDocument<96> res;
+        StaticJsonDocument<128> res;
         res["status"] = "ok";
-        serializeJson(res, Serial); Serial.println();
+        res["duty"] = duty;
+        res["max_duty"] = pwmSafeMaxDuty();
+        serializeJson(res, out);
+        return true;
+    }
+    else if (strcmp(cmd, "get_pwm_config") == 0) {
+        StaticJsonDocument<128> res;
+        res["status"] = "ok";
+        res["freq"] = PWM_FREQ;
+        res["res"]  = PWM_RES;
+        serializeJson(res, out);
+        return true;
+    }
+    else if (strcmp(cmd, "set_pwm_config") == 0) {
+        if (!doc.containsKey("freq") || !doc.containsKey("res")) {
+            buildErrorJson(cmd, "ERR_MISSING_PARAM", "freq and res are required", out);
+            return false;
+        }
+        int freq = doc["freq"];
+        int res  = doc["res"];
+        if (freq < 1 || freq > 20000) {
+            buildErrorJson(cmd, "ERR_INVALID_FREQ", "freq must be 1-20000", out);
+            return false;
+        }
+        if (res < 1 || res > 14) {
+            buildErrorJson(cmd, "ERR_INVALID_RES", "res must be 1-14", out);
+            return false;
+        }
+        int oldFreq = PWM_FREQ;
+        int oldRes  = PWM_RES;
+        int oldMax  = pwmMaxDuty();
+        int oldDuty[2] = {PWM_DUTY[0], PWM_DUTY[1]};
+        PWM_FREQ = freq;
+        PWM_RES  = res;
+        int newMax = pwmMaxDuty();
+        for (int i = 0; i < 2; i++) {
+            PWM_DUTY[i] = scaleDuty(PWM_DUTY[i], oldMax, newMax);
+        }
+        if (!applyPWMConfig(false)) {
+            PWM_FREQ = oldFreq;
+            PWM_RES  = oldRes;
+            for (int i = 0; i < 2; i++) PWM_DUTY[i] = oldDuty[i];
+            applyPWMConfig(false);
+            buildErrorJson(cmd, "ERR_PWM_ATTACH", "failed to apply PWM frequency/resolution", out);
+            return false;
+        }
+        prefs.putInt("pwm_freq", freq);
+        prefs.putInt("pwm_res",  res);
+        StaticJsonDocument<160> resdoc;
+        resdoc["status"] = "ok";
+        resdoc["freq"] = freq;
+        resdoc["res"]  = res;
+        resdoc["max_duty"] = pwmSafeMaxDuty();
+        serializeJson(resdoc, out);
+        return true;
     }
     else if (strcmp(cmd, "ping") == 0) {
         StaticJsonDocument<96> res;
         res["status"] = "ok";
         res["message"] = "pong";
-        serializeJson(res, Serial); Serial.println();
+        serializeJson(res, out);
+        return true;
     }
     else {
-        sendError(cmd, "ERR_UNKNOWN_COMMAND", "command not recognized");
+        buildErrorJson(cmd, "ERR_UNKNOWN_COMMAND", "command not recognized", out);
+        return false;
     }
+}
+
+// ------------------------------------------------------------
+// API: 汎用 JSON コマンド（HTTP POST /api/cmd）
+// ------------------------------------------------------------
+void api_cmd() {
+    String out;
+    processJson(server.arg("plain"), out);
+    server.send(200, "application/json", out);
 }
 
 // ------------------------------------------------------------
@@ -361,6 +482,8 @@ void api_get_config() {
     StaticJsonDocument<256> doc;
     doc["pwm_freq"] = PWM_FREQ;
     doc["pwm_res"]  = PWM_RES;
+    doc["ssid"]     = ssid;
+    doc["pass"]     = pass;
     doc["dhcp"]     = useDHCP;
     doc["ip"]       = ipStr;
     doc["mask"]     = maskStr;
@@ -378,13 +501,28 @@ void api_set_pwm_config() {
     StaticJsonDocument<128> doc;
     deserializeJson(doc, server.arg("plain"));
 
-    PWM_FREQ = doc["freq"];
-    PWM_RES  = doc["res"];
+    int freq = doc["freq"];
+    int res  = doc["res"];
 
+    int oldFreq = PWM_FREQ;
+    int oldRes  = PWM_RES;
+    int oldMax  = pwmMaxDuty();
+    int oldDuty[2] = {PWM_DUTY[0], PWM_DUTY[1]};
+
+    PWM_FREQ = freq;
+    PWM_RES  = res;
+    int newMax = pwmMaxDuty();
     for (int i = 0; i < 2; i++) {
-        ledcDetach(PWM_PINS[i]);
-        ledcAttach(PWM_PINS[i], PWM_FREQ, PWM_RES);
-        ledcWrite(PWM_PINS[i], PWM_DUTY[i]);
+        PWM_DUTY[i] = scaleDuty(PWM_DUTY[i], oldMax, newMax);
+    }
+
+    if (!applyPWMConfig(false)) {
+        PWM_FREQ = oldFreq;
+        PWM_RES  = oldRes;
+        for (int i = 0; i < 2; i++) PWM_DUTY[i] = oldDuty[i];
+        applyPWMConfig(false);
+        server.send(500, "text/plain", "ERR_PWM_ATTACH");
+        return;
     }
 
     prefs.putInt("pwm_freq", PWM_FREQ);
@@ -397,14 +535,18 @@ void api_set_pwm_config() {
 // API: ネットワーク設定
 // ------------------------------------------------------------
 void api_set_network_config() {
-    StaticJsonDocument<256> doc;
+    StaticJsonDocument<384> doc;
     deserializeJson(doc, server.arg("plain"));
 
+    if (doc["ssid"].is<const char*>()) ssid = (const char*)doc["ssid"];
+    if (doc["pass"].is<const char*>()) pass = (const char*)doc["pass"];
     useDHCP = doc["dhcp"];
-    ipStr   = (const char*)doc["ip"];
-    maskStr = (const char*)doc["mask"];
-    gwStr   = (const char*)doc["gw"];
+    if (doc["ip"].is<const char*>()) ipStr = (const char*)doc["ip"];
+    if (doc["mask"].is<const char*>()) maskStr = (const char*)doc["mask"];
+    if (doc["gw"].is<const char*>()) gwStr = (const char*)doc["gw"];
 
+    prefs.putString("ssid", ssid);
+    prefs.putString("pass", pass);
     prefs.putBool("dhcp", useDHCP);
     prefs.putString("ip",   ipStr);
     prefs.putString("mask", maskStr);
@@ -444,7 +586,11 @@ void api_get_io_state() {
 // Wi-Fi 接続（失敗したら AP モード）
 // ------------------------------------------------------------
 bool connectWiFi() {
+    if (ssid.length() == 0) return false;
+
     WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false);
+    WiFi.setAutoReconnect(true);
 
     if (useDHCP) {
         WiFi.begin(ssid.c_str(), pass.c_str());
@@ -465,6 +611,26 @@ bool connectWiFi() {
     return true;
 }
 
+void maintainWiFiConnection() {
+    if (WiFi.getMode() != WIFI_STA) return;
+
+    unsigned long now = millis();
+    if (now - lastWiFiCheckMs < WIFI_CHECK_INTERVAL_MS) return;
+    lastWiFiCheckMs = now;
+
+    if (WiFi.status() == WL_CONNECTED) {
+        if (ledState != LED_WIFI_OK) ledState = LED_WIFI_OK;
+        return;
+    }
+
+    ledState = LED_WIFI_CONNECTING;
+    if (now - lastWiFiReconnectMs < WIFI_RECONNECT_INTERVAL_MS) return;
+    lastWiFiReconnectMs = now;
+
+    Serial.println("WiFi disconnected, trying reconnect...");
+    WiFi.reconnect();
+}
+
 void startAPFallback() {
     WiFi.mode(WIFI_AP);
     WiFi.softAP("ESP32-Setup", "12345678");
@@ -480,10 +646,8 @@ void setup() {
 
     // LED 初期化
     pinMode(LED_PIN, OUTPUT);
-    digitalWrite(LED_PIN, HIGH); // 消灯
+    digitalWrite(LED_PIN, LOW); // 消灯
     ledState = LED_WIFI_CONNECTING;
-
-    checkResetButton();
 
     prefs.begin("config", false);
 
@@ -491,6 +655,8 @@ void setup() {
     PWM_RES  = prefs.getInt("pwm_res",  PWM_RES);
 
     useDHCP = prefs.getBool("dhcp", true);
+    ssid    = prefs.getString("ssid", ssid);
+    pass    = prefs.getString("pass", pass);
     ipStr   = prefs.getString("ip",   ipStr);
     maskStr = prefs.getString("mask", maskStr);
     gwStr   = prefs.getString("gw",   gwStr);
@@ -501,11 +667,7 @@ void setup() {
         digitalWrite(DIO_OUT_PINS[i], LOW);
     }
 
-    for (int i = 0; i < 2; i++) {
-        ledcAttach(PWM_PINS[i], PWM_FREQ, PWM_RES);
-        ledcWrite(PWM_PINS[i], 0);
-        PWM_DUTY[i] = 0;
-    }
+    applyPWMConfig(true);
 
     // Wi-Fi 接続
     if (connectWiFi()) {
@@ -520,6 +682,7 @@ void setup() {
     server.on("/api/set_pwm_config", HTTP_POST, api_set_pwm_config);
     server.on("/api/set_network_config", HTTP_POST, api_set_network_config);
     server.on("/api/get_io_state", api_get_io_state);
+    server.on("/api/cmd", HTTP_POST, api_cmd);
 
     server.begin();
 }
@@ -529,6 +692,7 @@ void setup() {
 // ------------------------------------------------------------
 void loop() {
     server.handleClient();
+    maintainWiFiConnection();
 
     // LED 状態更新（非ブロッキング）
     updateLed();
@@ -538,10 +702,26 @@ void loop() {
     while (Serial.available()) {
         char c = Serial.read();
         if (c == '\n') {
-            processJson(buf);
+            String res;
+            processJson(buf, res);
+            Serial.println(res);
             buf = "";
         } else {
             buf += c;
         }
+    }
+
+    // BOOT ボタン長押し（非ブロッキング）: 3秒でNVSリセット→再起動
+    static unsigned long bootPressStart = 0;
+    if (digitalRead(RESET_PIN) == LOW) {
+        if (bootPressStart == 0) bootPressStart = millis();
+        if (millis() - bootPressStart > 3000) {
+            Serial.println("Factory reset triggered.");
+            prefs.clear();
+            delay(300);
+            ESP.restart();
+        }
+    } else {
+        bootPressStart = 0;
     }
 }
