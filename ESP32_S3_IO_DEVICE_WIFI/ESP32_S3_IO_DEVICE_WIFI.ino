@@ -751,7 +751,7 @@ void setupWebServer() {
     server.begin();
 }
 
-bool applyPWMConfig(bool resetDuty = false) {
+bool applyPWMConfig(bool resetDuty) {
     // ------------------------------------------------------------
     // 【PWM設定反映（attach/detach）】
     // ------------------------------------------------------------
@@ -936,6 +936,20 @@ void loop() {
     yield();
 
     server.handleClient();
+
+933934935936937938939940941942943944945946947948949950951952953954955956957958959960961930931932928929
+
+    bool overflowed = false;
+    if (!readLine(line, overflowed)) {
+        if (overflowed) {
+            sendError("unknown", "ERR_LINE_TOO_LONG", "input line too long");
+        }
+        return;
+    }
+    line.trim();
+    if (line.length() == 0) return;
+
+
 
     String line;
     bool overflowed = false;

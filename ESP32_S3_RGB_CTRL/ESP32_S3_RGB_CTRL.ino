@@ -6,6 +6,8 @@
 const int RGB_PIN = 48;
 const int PIXEL_COUNT = 1;
 const uint8_t DEFAULT_BRIGHTNESS = 64;
+const unsigned long SERIAL_BAUD_RATE = 115200;
+const unsigned long SERIAL_STARTUP_DELAY_MS = 100;
 
 Adafruit_NeoPixel rgb(PIXEL_COUNT, RGB_PIN, NEO_GRB + NEO_KHZ800);
 
@@ -40,9 +42,14 @@ void applyLed() {
 }
 
 // ------------------------------------------------------------
-// 非ブロッキング行読み取り
+// テキスト受け渡し層
 // ------------------------------------------------------------
-bool readLine(String& out) {
+void beginTextTransport() {
+    Serial.begin(SERIAL_BAUD_RATE);
+    delay(SERIAL_STARTUP_DELAY_MS);
+}
+
+bool tryReadTextLine(String& out) {
     static String buf;
 
     while (Serial.available()) {
@@ -61,8 +68,7 @@ bool readLine(String& out) {
 // 初期化
 // ------------------------------------------------------------
 void setup() {
-    Serial.begin(115200);
-    delay(100);
+    beginTextTransport();
 
     rgb.begin();
     rgb.setBrightness(DEFAULT_BRIGHTNESS);
@@ -76,7 +82,7 @@ void loop() {
     yield();
 
     String line;
-    if (!readLine(line)) return;
+    if (!tryReadTextLine(line)) return;
     line.trim();
     if (line.length() == 0) return;
 
