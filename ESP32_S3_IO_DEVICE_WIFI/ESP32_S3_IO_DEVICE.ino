@@ -1,38 +1,87 @@
+// ============================================================
+// ESP32 S3 IO DEVICE WIFI メインスケッチ
+// - デジタル入出力、アナログ入力、PWM出力、WiFi/AP設定、Webサーバ/API制御
+// - ピン数可変対応、設定保存、シリアル/HTTP制御
+// ============================================================
+
+// ------------------------------------------------------------
+// 【ピン配列・カウントマクロ】
+// ------------------------------------------------------------
+// DIO_IN_PINS: デジタル入力ピン番号配列
+// DIO_OUT_PINS: デジタル出力ピン番号配列
+// ADC_PINS: アナログ入力ピン番号配列
+// PWM_PINS: PWM出力ピン番号配列
+// *_COUNT: 各配列の要素数（ピン数）
+// ------------------------------------------------------------
+// 【WiFi/AP/設定用定数】
+// ------------------------------------------------------------
+// PREF_NS: NVS保存用ネームスペース
+// AP_SSID/AP_PASS: 設定用APのSSID/パスワード
+// DEFAULT_WIFI_*: WiFi静的IP設定のデフォルト値
+// ------------------------------------------------------------
+// 【PWMデフォルト設定】
+// ------------------------------------------------------------
+// PWMのデフォルト周波数・分解能
+// ------------------------------------------------------------
+// 【グローバル変数】
+// ------------------------------------------------------------
+// PWM_FREQ/PWM_RES: 現在のPWM設定値
+// PWM_DUTY: 各PWMピンのデューティ配列
+// prefs: NVSアクセス用
+// server: Webサーバインスタンス
+// ------------------------------------------------------------
+// 【WiFi設定構造体】
+// ------------------------------------------------------------
+// WiFi/AP/静的IP等の設定を保持
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <WiFi.h>
 #include <WebServer.h>
 
+
 // ------------------------------------------------------------
-// 固定ピンマッピング
+// 定数・ピン配列・カウントマクロ
 // ------------------------------------------------------------
-const int DIO_IN_PINS[6]  = {4, 5, 6, 7, 8, 9};
-const int DIO_OUT_PINS[6] = {10, 11, 12, 13, 14, 15};
-const int ADC_PINS[2]     = {1, 2};
-const int PWM_PINS[2]     = {38, 39};
+// --- ピン配列 ---
+const int DIO_IN_PINS[]   = {4, 5, 6, 7, 8, 9};
+const int DIO_OUT_PINS[]  = {10, 11, 12, 13, 14, 15};
+const int ADC_PINS[]      = {1, 2};
+const int PWM_PINS[]      = {38, 39};
 const int BOOT_BUTTON_PIN = 0;
 
-const char* PREF_NS = "esp32io";
-const char* AP_SSID = "ESP32_S3_IO_SETUP";
-const char* AP_PASS = "esp32setup";
+// --- カウントマクロ ---
+#define DIO_IN_COUNT   (sizeof(DIO_IN_PINS)/sizeof(DIO_IN_PINS[0]))
+#define DIO_OUT_COUNT  (sizeof(DIO_OUT_PINS)/sizeof(DIO_OUT_PINS[0]))
+#define ADC_COUNT      (sizeof(ADC_PINS)/sizeof(ADC_PINS[0]))
+#define PWM_COUNT      (sizeof(PWM_PINS)/sizeof(PWM_PINS[0]))
 
-// デフォルト PWM 設定
-const int DEFAULT_PWM_FREQ = 5000;
-const int DEFAULT_PWM_RES  = 8;
-
-const bool DEFAULT_WIFI_STATIC = false;
+// --- WiFi/AP/設定用定数 ---
+const char* PREF_NS           = "esp32io";
+const char* AP_SSID           = "ESP32_S3_IO_SETUP";
+const char* AP_PASS           = "esp32setup";
+const bool  DEFAULT_WIFI_STATIC = false;
 const char* DEFAULT_WIFI_IP     = "192.168.1.50";
 const char* DEFAULT_WIFI_GATEWAY= "192.168.1.1";
 const char* DEFAULT_WIFI_SUBNET = "255.255.255.0";
 
+// --- PWMデフォルト ---
+const int DEFAULT_PWM_FREQ = 5000;
+const int DEFAULT_PWM_RES  = 8;
+
+// ------------------------------------------------------------
+// グローバル変数
+// ------------------------------------------------------------
 int PWM_FREQ = DEFAULT_PWM_FREQ;
 int PWM_RES  = DEFAULT_PWM_RES;
-int PWM_DUTY[2] = {0, 0};
+int PWM_DUTY[PWM_COUNT] = {0};
 
 Preferences prefs;
 WebServer server(80);
 
+// ------------------------------------------------------------
+// 構造体定義
+// ------------------------------------------------------------
 struct WifiConfig {
     String ssid;
     String pass;
@@ -41,15 +90,21 @@ struct WifiConfig {
     IPAddress gateway;
     IPAddress subnet;
 };
-
 WifiConfig wifiCfg;
 bool wifiConnected = false;
 
 int pwmMaxDuty() {
+    // ------------------------------------------------------------
+    // 【PWMデューティ最大値計算】
+    // ------------------------------------------------------------
     return (1UL << PWM_RES) - 1;
 }
 
 int pwmSafeMaxDuty() {
+    // ------------------------------------------------------------
+    // 【PWMデューティ最大値（安全値）計算】
+    // 分解能14bit時の最大値調整
+    // ------------------------------------------------------------
     int maxDuty = pwmMaxDuty();
     if (PWM_RES >= 14 && maxDuty > 0) {
         return maxDuty - 1;
@@ -58,15 +113,25 @@ int pwmSafeMaxDuty() {
 }
 
 int scaleDuty(int duty, int oldMax, int newMax) {
+    // ------------------------------------------------------------
+    // 【PWMデューティ値スケーリング】
+    // 分解能変更時の値変換
+    // ------------------------------------------------------------
     if (oldMax <= 0) return 0;
     return (static_cast<long>(duty) * newMax) / oldMax;
 }
 
 bool parseIp(const String& s, IPAddress& out) {
+    // ------------------------------------------------------------
+    // 【IPアドレス文字列→IPAddress変換】
+    // ------------------------------------------------------------
     return out.fromString(s);
 }
 
 bool parseStrictInt(const String& s, int& out) {
+    // ------------------------------------------------------------
+    // 【厳密な整数変換（文字列→int）】
+    // ------------------------------------------------------------
     if (s.length() == 0) return false;
 
     int sign = 1;
@@ -98,10 +163,16 @@ bool parseStrictInt(const String& s, int& out) {
 }
 
 String ipToString(const IPAddress& ip) {
+    // ------------------------------------------------------------
+    // 【IPAddress→文字列変換】
+    // ------------------------------------------------------------
     return ip.toString();
 }
 
 String htmlEscape(const String& s) {
+    // ------------------------------------------------------------
+    // 【HTMLエスケープ】
+    // ------------------------------------------------------------
     String out;
     out.reserve(s.length() + 16);
     for (size_t i = 0; i < s.length(); i++) {
@@ -117,6 +188,9 @@ String htmlEscape(const String& s) {
 }
 
 void saveWifiConfig() {
+    // ------------------------------------------------------------
+    // 【WiFi設定をNVS保存】
+    // ------------------------------------------------------------
     prefs.begin(PREF_NS, false);
     prefs.putString("w_ssid", wifiCfg.ssid);
     prefs.putString("w_pass", wifiCfg.pass);
@@ -128,6 +202,9 @@ void saveWifiConfig() {
 }
 
 void loadWifiConfig() {
+    // ------------------------------------------------------------
+    // 【WiFi設定をNVSから読み出し】
+    // ------------------------------------------------------------
     prefs.begin(PREF_NS, true);
     wifiCfg.ssid = prefs.getString("w_ssid", "");
     wifiCfg.pass = prefs.getString("w_pass", "");
@@ -143,6 +220,9 @@ void loadWifiConfig() {
 }
 
 void clearAllSettingsIfBootLongPressed() {
+    // ------------------------------------------------------------
+    // 【BOOT長押しで全設定クリア】
+    // ------------------------------------------------------------
     const unsigned long HOLD_MS = 2000;
     pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
     delay(20);
@@ -165,6 +245,9 @@ void clearAllSettingsIfBootLongPressed() {
 }
 
 void startConfigAp() {
+    // ------------------------------------------------------------
+    // 【設定用AP起動】
+    // ------------------------------------------------------------
     WiFi.mode(WIFI_AP_STA);
     bool ok = WiFi.softAP(AP_SSID, AP_PASS);
     Serial.print("AP SSID: ");
@@ -176,6 +259,9 @@ void startConfigAp() {
 }
 
 bool connectStaFromConfig() {
+    // ------------------------------------------------------------
+    // 【保存済みWiFi設定でSTA接続】
+    // ------------------------------------------------------------
     if (wifiCfg.ssid.length() == 0) {
         wifiConnected = false;
         return false;
@@ -208,6 +294,9 @@ bool connectStaFromConfig() {
 }
 
 void buildError(JsonDocument& res, const char* cmd, const char* code, const char* detail) {
+    // ------------------------------------------------------------
+    // 【エラー応答JSON生成】
+    // ------------------------------------------------------------
     res.clear();
     res["status"] = "error";
     res["cmd"] = cmd;
@@ -216,6 +305,9 @@ void buildError(JsonDocument& res, const char* cmd, const char* code, const char
 }
 
 bool applyPwmConfigCommand(int freq, int res, JsonDocument& out, const char* cmd) {
+    // ------------------------------------------------------------
+    // 【PWM周波数・分解能変更コマンド処理】
+    // ------------------------------------------------------------
     if (freq < 1 || freq > 20000) {
         buildError(out, cmd, "ERR_INVALID_FREQ", "freq must be 1-20000");
         return false;
@@ -226,23 +318,25 @@ bool applyPwmConfigCommand(int freq, int res, JsonDocument& out, const char* cmd
         return false;
     }
 
+
     int oldFreq = PWM_FREQ;
     int oldRes  = PWM_RES;
     int oldMax = pwmMaxDuty();
-    int oldDuty[2] = {PWM_DUTY[0], PWM_DUTY[1]};
+    int oldDuty[PWM_COUNT];
+    for (int i = 0; i < PWM_COUNT; i++) oldDuty[i] = PWM_DUTY[i];
 
     PWM_FREQ = freq;
     PWM_RES  = res;
 
     int newMax = pwmMaxDuty();
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < PWM_COUNT; i++) {
         PWM_DUTY[i] = scaleDuty(PWM_DUTY[i], oldMax, newMax);
     }
 
     if (!applyPWMConfig(false)) {
         PWM_FREQ = oldFreq;
         PWM_RES  = oldRes;
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < PWM_COUNT; i++) {
             PWM_DUTY[i] = oldDuty[i];
         }
         applyPWMConfig(false);
@@ -261,6 +355,9 @@ bool applyPwmConfigCommand(int freq, int res, JsonDocument& out, const char* cmd
 }
 
 void processCommand(JsonVariantConst req, JsonDocument& res) {
+    // ------------------------------------------------------------
+    // 【APIコマンド分岐・処理本体】
+    // ------------------------------------------------------------
     if (!req.containsKey("cmd")) {
         buildError(res, "unknown", "ERR_MISSING_CMD", "cmd field is required");
         return;
@@ -302,16 +399,16 @@ void processCommand(JsonVariantConst req, JsonDocument& res) {
         res["status"] = "ok";
 
         JsonArray di = res.createNestedArray("dio_in");
-        for (int i = 0; i < 6; i++) di.add(digitalRead(DIO_IN_PINS[i]));
+        for (int i = 0; i < DIO_IN_COUNT; i++) di.add(digitalRead(DIO_IN_PINS[i]));
 
         JsonArray doo = res.createNestedArray("dio_out");
-        for (int i = 0; i < 6; i++) doo.add(digitalRead(DIO_OUT_PINS[i]));
+        for (int i = 0; i < DIO_OUT_COUNT; i++) doo.add(digitalRead(DIO_OUT_PINS[i]));
 
         JsonArray adc = res.createNestedArray("adc");
-        for (int i = 0; i < 2; i++) adc.add(readADC(ADC_PINS[i]));
+        for (int i = 0; i < ADC_COUNT; i++) adc.add(readADC(ADC_PINS[i]));
 
         JsonArray pwm = res.createNestedArray("pwm");
-        for (int i = 0; i < 2; i++) pwm.add(PWM_DUTY[i]);
+        for (int i = 0; i < PWM_COUNT; i++) pwm.add(PWM_DUTY[i]);
         return;
     }
 
@@ -326,8 +423,10 @@ void processCommand(JsonVariantConst req, JsonDocument& res) {
         }
 
         int id = req["pin_id"];
-        if (!checkRange(id, 6)) {
-            buildError(res, cmd, "ERR_INVALID_DIO_IN_PIN_ID", "pin_id must be 0-5");
+        if (!checkRange(id, DIO_IN_COUNT)) {
+            char errMsg[48];
+            snprintf(errMsg, sizeof(errMsg), "pin_id must be 0-%d", DIO_IN_COUNT-1);
+            buildError(res, cmd, "ERR_INVALID_DIO_IN_PIN_ID", errMsg);
             return;
         }
 
@@ -349,8 +448,10 @@ void processCommand(JsonVariantConst req, JsonDocument& res) {
         int id = req["pin_id"];
         int value = req["value"];
 
-        if (!checkRange(id, 6)) {
-            buildError(res, cmd, "ERR_INVALID_DIO_OUT_PIN_ID", "pin_id must be 0-5");
+        if (!checkRange(id, DIO_OUT_COUNT)) {
+            char errMsg[48];
+            snprintf(errMsg, sizeof(errMsg), "pin_id must be 0-%d", DIO_OUT_COUNT-1);
+            buildError(res, cmd, "ERR_INVALID_DIO_OUT_PIN_ID", errMsg);
             return;
         }
         if (!(value == 0 || value == 1)) {
@@ -374,8 +475,10 @@ void processCommand(JsonVariantConst req, JsonDocument& res) {
         }
 
         int id = req["pin_id"];
-        if (!checkRange(id, 2)) {
-            buildError(res, cmd, "ERR_INVALID_ADC_PIN_ID", "pin_id must be 0-1");
+        if (!checkRange(id, ADC_COUNT)) {
+            char errMsg[48];
+            snprintf(errMsg, sizeof(errMsg), "pin_id must be 0-%d", ADC_COUNT-1);
+            buildError(res, cmd, "ERR_INVALID_ADC_PIN_ID", errMsg);
             return;
         }
 
@@ -397,8 +500,10 @@ void processCommand(JsonVariantConst req, JsonDocument& res) {
         int id = req["pin_id"];
         int duty = req["duty"];
 
-        if (!checkRange(id, 2)) {
-            buildError(res, cmd, "ERR_INVALID_PWM_PIN_ID", "pin_id must be 0-1");
+        if (!checkRange(id, PWM_COUNT)) {
+            char errMsg[48];
+            snprintf(errMsg, sizeof(errMsg), "pin_id must be 0-%d", PWM_COUNT-1);
+            buildError(res, cmd, "ERR_INVALID_PWM_PIN_ID", errMsg);
             return;
         }
 
@@ -445,11 +550,17 @@ void processCommand(JsonVariantConst req, JsonDocument& res) {
 }
 
 void sendJsonToSerial(JsonDocument& doc) {
+    // ------------------------------------------------------------
+    // 【シリアルへJSON送信】
+    // ------------------------------------------------------------
     serializeJson(doc, Serial);
     Serial.println();
 }
 
 void handleApi() {
+    // ------------------------------------------------------------
+    // 【/apiエンドポイント処理】
+    // ------------------------------------------------------------
     StaticJsonDocument<512> req;
     StaticJsonDocument<512> res;
 
@@ -526,6 +637,9 @@ void handleApi() {
 }
 
 String makeConfigPage() {
+    // ------------------------------------------------------------
+    // 【設定用WebページHTML生成】
+    // ------------------------------------------------------------
     String modeDhcpChecked = wifiCfg.useStatic ? "" : "checked";
     String modeStaticChecked = wifiCfg.useStatic ? "checked" : "";
     String staIp = (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString() : "not connected";
@@ -563,10 +677,16 @@ String makeConfigPage() {
 }
 
 void handleRoot() {
+    // ------------------------------------------------------------
+    // 【/ルートエンドポイント処理】
+    // ------------------------------------------------------------
     server.send(200, "text/html", makeConfigPage());
 }
 
 void handleSave() {
+    // ------------------------------------------------------------
+    // 【/saveエンドポイント処理】
+    // ------------------------------------------------------------
     if (!server.hasArg("ssid")) {
         server.send(400, "text/plain", "ssid is required");
         return;
@@ -622,6 +742,9 @@ void handleSave() {
 }
 
 void setupWebServer() {
+    // ------------------------------------------------------------
+    // 【Webサーバ初期化・ルーティング】
+    // ------------------------------------------------------------
     server.on("/", HTTP_GET, handleRoot);
     server.on("/save", HTTP_POST, handleSave);
     server.on("/api", HTTP_ANY, handleApi);
@@ -629,10 +752,13 @@ void setupWebServer() {
 }
 
 bool applyPWMConfig(bool resetDuty = false) {
+    // ------------------------------------------------------------
+    // 【PWM設定反映（attach/detach）】
+    // ------------------------------------------------------------
     int maxDuty = pwmSafeMaxDuty();
     bool okAll = true;
 
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < PWM_COUNT; i++) {
         // 既存の PWM 設定が残っていると res/freq が切り替わらないことがあるため、
         // 一度デタッチしてから再アタッチする。
         ledcDetach(PWM_PINS[i]);
@@ -655,6 +781,9 @@ bool applyPWMConfig(bool resetDuty = false) {
 // PIN_ID 範囲チェック
 // ------------------------------------------------------------
 bool checkRange(int id, int max) {
+    // ------------------------------------------------------------
+    // 【ID範囲チェック】
+    // ------------------------------------------------------------
     return (id >= 0 && id < max);
 }
 
@@ -662,6 +791,9 @@ bool checkRange(int id, int max) {
 // ADC 平均化
 // ------------------------------------------------------------
 int readADC(int gpio) {
+    // ------------------------------------------------------------
+    // 【ADC値平均化取得】
+    // ------------------------------------------------------------
     const int N = 8;
     int sum = 0;
     for (int i = 0; i < N; i++) {
@@ -674,6 +806,9 @@ int readADC(int gpio) {
 // エラー応答
 // ------------------------------------------------------------
 void sendError(const char* cmd, const char* code, const char* detail) {
+    // ------------------------------------------------------------
+    // 【エラー応答をシリアル送信】
+    // ------------------------------------------------------------
     StaticJsonDocument<192> res;
     buildError(res, cmd, code, detail);
     sendJsonToSerial(res);
@@ -683,6 +818,9 @@ void sendError(const char* cmd, const char* code, const char* detail) {
 // 非ブロッキング行読み取り
 // ------------------------------------------------------------
 bool readLine(String& out, bool& overflowed) {
+    // ------------------------------------------------------------
+    // 【シリアル非ブロッキング行読み取り】
+    // ------------------------------------------------------------
     static String buf;
     static bool dropping = false;
     const size_t MAX_LINE_LEN = 512;
@@ -723,6 +861,9 @@ bool readLine(String& out, bool& overflowed) {
 // PWM 設定の保存・読み込み
 // ------------------------------------------------------------
 int loadPWMFreq() {
+    // ------------------------------------------------------------
+    // 【PWM周波数をNVSから取得】
+    // ------------------------------------------------------------
     prefs.begin(PREF_NS, true);
     int v = prefs.getInt("pwm_freq", DEFAULT_PWM_FREQ);
     prefs.end();
@@ -730,6 +871,9 @@ int loadPWMFreq() {
 }
 
 int loadPWMRes() {
+    // ------------------------------------------------------------
+    // 【PWM分解能をNVSから取得】
+    // ------------------------------------------------------------
     prefs.begin(PREF_NS, true);
     int v = prefs.getInt("pwm_res", DEFAULT_PWM_RES);
     prefs.end();
@@ -737,12 +881,18 @@ int loadPWMRes() {
 }
 
 void savePWMFreq(int v) {
+    // ------------------------------------------------------------
+    // 【PWM周波数をNVS保存】
+    // ------------------------------------------------------------
     prefs.begin(PREF_NS, false);
     prefs.putInt("pwm_freq", v);
     prefs.end();
 }
 
 void savePWMRes(int v) {
+    // ------------------------------------------------------------
+    // 【PWM分解能をNVS保存】
+    // ------------------------------------------------------------
     prefs.begin(PREF_NS, false);
     prefs.putInt("pwm_res", v);
     prefs.end();
@@ -752,6 +902,9 @@ void savePWMRes(int v) {
 // 初期化
 // ------------------------------------------------------------
 void setup() {
+    // ------------------------------------------------------------
+    // 【初期化処理】
+    // ------------------------------------------------------------
     Serial.begin(115200);
     delay(100);
 
@@ -761,8 +914,10 @@ void setup() {
     PWM_RES  = loadPWMRes();
     loadWifiConfig();
 
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < DIO_IN_COUNT; i++) {
         pinMode(DIO_IN_PINS[i], INPUT);
+    }
+    for (int i = 0; i < DIO_OUT_COUNT; i++) {
         pinMode(DIO_OUT_PINS[i], OUTPUT);
         digitalWrite(DIO_OUT_PINS[i], LOW);
     }
