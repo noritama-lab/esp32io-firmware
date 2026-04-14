@@ -1,0 +1,6 @@
+# Disable DTR/RTS-based reset on USB CDC
+CONFIG_ESP_CONSOLE_USB_CDC_SUPPORT_RESET=n
+
+# Ensure USB CDC console stays enabled (Arduino uses this)
+CONFIG_ESP_CONSOLE_USB_CDC=y
+CONFIG_TINYUSB_CDC_ENABLED=y

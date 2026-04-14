@@ -38,7 +38,7 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <WebServer.h>
-
+#include "tusb.h"
 
 // ------------------------------------------------------------
 // 定数・ピン配列・カウントマクロ
@@ -818,9 +818,10 @@ void sendError(const char* cmd, const char* code, const char* detail) {
 // 非ブロッキング行読み取り
 // ------------------------------------------------------------
 bool readLine(String& out, bool& overflowed) {
-    // ------------------------------------------------------------
-    // 【シリアル非ブロッキング行読み取り】
-    // ------------------------------------------------------------
+    // USB CDC のタスクを回す（WDT防止）
+    tud_task();
+    delay(1);
+
     static String buf;
     static bool dropping = false;
     const size_t MAX_LINE_LEN = 512;
@@ -934,34 +935,27 @@ void setup() {
 // ------------------------------------------------------------
 void loop() {
     yield();
-
     server.handleClient();
 
-933934935936937938939940941942943944945946947948949950951952953954955956957958959960961930931932928929
-
-    bool overflowed = false;
-    if (!readLine(line, overflowed)) {
-        if (overflowed) {
-            sendError("unknown", "ERR_LINE_TOO_LONG", "input line too long");
-        }
-        return;
-    }
-    line.trim();
-    if (line.length() == 0) return;
-
-
-
+    // ------------------------------------------------------------
+    // 【シリアル行読み取り】
+    // ------------------------------------------------------------
     String line;
     bool overflowed = false;
+
     if (!readLine(line, overflowed)) {
         if (overflowed) {
             sendError("unknown", "ERR_LINE_TOO_LONG", "input line too long");
         }
         return;
     }
+
     line.trim();
     if (line.length() == 0) return;
 
+    // ------------------------------------------------------------
+    // 【JSON パース】
+    // ------------------------------------------------------------
     StaticJsonDocument<512> doc;
     auto err = deserializeJson(doc, line);
     if (err) {
@@ -969,6 +963,9 @@ void loop() {
         return;
     }
 
+    // ------------------------------------------------------------
+    // 【コマンド処理】
+    // ------------------------------------------------------------
     StaticJsonDocument<512> res;
     processCommand(doc.as<JsonVariantConst>(), res);
     sendJsonToSerial(res);
