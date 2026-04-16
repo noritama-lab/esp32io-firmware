@@ -1,5 +1,5 @@
 /**
- * @file ESP32_S3_IO_DEVICE_WIFI.ino
+ * @file ESP32_S3_IO_DEVICE_NET.ino
  * @brief ESP32-S3 Remote IO Device Firmware
  * 
  * 主要機能:
@@ -290,7 +290,6 @@ void handleFactoryResetButton() {
             unsigned long duration = millis() - pressStart;
             if (duration > RESET_HOLD_TIME) {
                 // --- リセット実行 ---
-                Serial.println("!!! Factory Reset Triggered !!!");
                 // ユーザーに知らせるためにLEDを赤く高速点滅させる
                 for(int i=0; i<10; i++){
                     setLedColor(255, 0, 0, 255); delay(100);
@@ -310,51 +309,26 @@ void handleFactoryResetButton() {
 /**
  * 設定用のアクセスポイント（AP）モードを起動します。
  */
-void startConfigAp() {
-    WiFi.mode(WIFI_AP_STA);
-    bool ok = WiFi.softAP(AP_SSID, AP_PASS);
-    Serial.print("AP SSID: ");
-    Serial.println(AP_SSID);
-    Serial.print("AP start: ");
-    Serial.println(ok ? "ok" : "failed");
-    Serial.print("AP IP: ");
-    Serial.println(WiFi.softAPIP());
-}
+void startConfigAp() { WiFi.mode(WIFI_AP_STA); WiFi.softAP(AP_SSID, AP_PASS); }
 
 /**
  * 保存された設定を使用してWiFi（STAモード）に接続します。
- * @return 接続に成功したか
  */
-bool connectStaFromConfig() {
+void connectStaFromConfig() {
     if (wifiCfg.ssid.length() == 0) {
-        wifiConnected = false;
-        return false;
+        return;
     }
 
     if (wifiCfg.useStatic) {
         if (!WiFi.config(wifiCfg.ip, wifiCfg.gateway, wifiCfg.subnet)) {
             Serial.println("Failed to apply static IP config");
-            wifiConnected = false;
-            return false;
         }
     } else {
         WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE);
     }
 
+    WiFi.setAutoReconnect(true); // 自動再接続を有効化
     WiFi.begin(wifiCfg.ssid.c_str(), wifiCfg.pass.c_str());
-    unsigned long start = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
-        delay(250);
-    }
-
-    wifiConnected = (WiFi.status() == WL_CONNECTED);
-    Serial.print("STA connected: ");
-    Serial.println(wifiConnected ? "yes" : "no");
-    if (wifiConnected) {
-        Serial.print("STA IP: ");
-        Serial.println(WiFi.localIP());
-    }
-    return wifiConnected;
 }
 
 /**
@@ -832,21 +806,38 @@ void handleSave() {
     wifiCfg.subnet = sub;
     saveWifiConfig();
 
-    bool ok = connectStaFromConfig();
-
     String html = "<html><body><h3>Saved</h3>";
-    html += String("<p>STA connect: ") + (ok ? "success" : "failed") + "</p>";
-    if (ok) {
-        html += "<p>Device will restart now.</p>";
-    } else {
-        html += "<p>Device stays running so you can retry settings.</p>";
-    }
-    html += "<p><a href='/'>Back</a></p></body></html>";
+    html += "<p>WiFi settings saved. Device will restart and try to connect.</p>";
+    html += "</body></html>";
     server.send(200, "text/html", html);
 
-    if (ok) {
-        delay(300);
-        ESP.restart();
+    delay(500);
+    ESP.restart();
+}
+
+/**
+ * WiFiの接続状態を監視し、状況をシリアルに出力します。
+ * WiFi.begin() は一度呼べば内部で自動リトライされるため、ここでは状態監視のみを行います。
+ */
+void manageWiFiConnection() {
+    static unsigned long lastCheck = 0;
+    if (millis() - lastCheck < 2000) return; 
+    lastCheck = millis();
+
+    if (wifiCfg.ssid.length() == 0) return;
+
+    wl_status_t status = WiFi.status();
+    StaticJsonDocument<256> event;
+
+    if (status == WL_CONNECTED) {
+        if (!wifiConnected) {
+            wifiConnected = true;
+            event["type"] = "wifi_event";
+            event["status"] = "connected";
+            sendJsonToSerial(event);
+        }
+        // 接続試行中のドット表示はシリアルAPIを破壊するため廃止
+        // 必要であれば {"status": "connecting"} を送る
     }
 }
 
@@ -874,7 +865,6 @@ bool applyPWMConfig(bool resetDuty) {
         bool ok = ledcAttach(PWM_PINS[i], PWM_FREQ, PWM_RES);
         if (!ok) {
             okAll = false;
-            Serial.printf("PWM attach failed: pin=%d freq=%d res=%d\n", PWM_PINS[i], PWM_FREQ, PWM_RES);
             continue;
         }
 
@@ -1027,7 +1017,10 @@ void savePWMRes(int v) {
  */
 void setup() {
     Serial.begin(115200);
-    delay(100);
+    
+    // WiFi設定を反映させる前に、以前の接続状態を完全にクリア
+    WiFi.disconnect(true, true);
+    delay(500); 
 
     PWM_FREQ = loadPWMFreq();
     PWM_RES  = loadPWMRes();
@@ -1061,7 +1054,8 @@ void setup() {
 void loop() {
     yield();
     server.handleClient();
-    handleFactoryResetButton(); // BOOTボタンの長押し監視を追加
+    handleFactoryResetButton();
+    manageWiFiConnection(); // WiFiの状態を監視
 
     String line;
     bool overflowed = false;
