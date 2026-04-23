@@ -1,6 +1,6 @@
 /**
  * @file HardwareManager.cpp
- * @brief Implementation of hardware peripheral management.
+ * @brief ハードウェア周辺機器管理の実装。
  * @copyright Copyright (c) 2024 norit. Licensed under the MIT License.
  */
 #include "HardwareManager.h"
@@ -13,8 +13,8 @@ HardwareManager::HardwareManager()
 }
 
 /**
- * @brief Set up all pins and peripherals.
- * Loads default PWM settings and prepares NeoPixel.
+ * @brief すべてのピンと周辺機器を設定します。
+ * デフォルトのPWM設定をロードし、NeoPixelを準備します。
  */
 void HardwareManager::begin() {
     for (int i = 0; i < DIO_IN_COUNT; i++) pinMode(DIO_IN_PINS[i], INPUT);
@@ -32,15 +32,20 @@ int HardwareManager::readDI(int id) {
     return digitalRead(DIO_IN_PINS[id]);
 }
 
+int HardwareManager::readDO(int id) {
+    if (id < 0 || id >= DIO_OUT_COUNT) return 0;
+    return digitalRead(DIO_OUT_PINS[id]);
+}
+
 void HardwareManager::writeDO(int id, int value) {
     if (id < 0 || id >= DIO_OUT_COUNT) return;
     digitalWrite(DIO_OUT_PINS[id], value ? HIGH : LOW);
 }
 
 /**
- * @brief Reads ADC with multi-sampling.
- * @param id ADC index defined in Config.h.
- * @return Averaged 12-bit ADC value.
+ * @brief マルチサンプリングによるADC読み取り。
+ * @param id Config.hで定義されたADCインデックス。
+ * @return 平均化されたADC値 (ミリボルト)。
  */
 int HardwareManager::readADCValue(int id) {
     if (id < 0 || id >= ADC_COUNT) return 0;
@@ -50,32 +55,31 @@ int HardwareManager::readADCValue(int id) {
 }
 
 /**
- * @brief Re-configures PWM frequency and resolution.
- * Duties are scaled automatically to match new resolution.
+ * @brief PWMの周波数と分解能を再設定します。
+ * デューティは新しい分解能に合わせて自動的にスケーリングされます。
  */
 bool HardwareManager::applyPwmConfig(int freq, int res) {
-    int oldMax = calculateMaxDuty(_pwmSettings.res);
-    int newMax = calculateMaxDuty(res);
+    bool success = true;
+    long oldMax = calculateMaxDuty(_pwmSettings.res);
+    long newMax = calculateMaxDuty(res);
 
     _pwmSettings.freq = freq;
     _pwmSettings.res = res;
 
-    bool success = true;
     for (int i = 0; i < PWM_COUNT; i++) {
         ledcDetach(PWM_PINS[i]);
         if (!ledcAttach(PWM_PINS[i], freq, res)) success = false;
         
-        // 解像度に合わせてデューティをスケーリング
-        _pwmSettings.duties[i] = (static_cast<long>(_pwmSettings.duties[i]) * newMax) / oldMax;
+        _pwmSettings.duties[i] = (_pwmSettings.duties[i] * newMax) / oldMax;
         ledcWrite(PWM_PINS[i], _pwmSettings.duties[i]);
     }
     return success;
 }
 
 /**
- * @brief Updates individual PWM channel duty cycle.
- * @param id PWM index.
- * @param duty New duty value (constrained to safe max).
+ * @brief 個々のPWMチャネルのデューティサイクルを更新します。
+ * @param id PWMインデックス。
+ * @param duty 新しいデューティ値（安全な最大値に制限されます）。
  */
 void HardwareManager::setPwmDuty(int id, int duty) {
     if (id < 0 || id >= PWM_COUNT) return;
@@ -89,7 +93,7 @@ int HardwareManager::calculateMaxDuty(int res) const {
 }
 
 /**
- * @brief Returns safe max duty to prevent overflow on certain resolutions.
+ * @brief 特定の分解能でのオーバーフローを防ぐため、安全な最大デューティを返します。
  */
 int HardwareManager::getSafeMaxDuty() const {
     int maxD = calculateMaxDuty(_pwmSettings.res);
@@ -97,8 +101,8 @@ int HardwareManager::getSafeMaxDuty() const {
 }
 
 /**
- * @brief Set built-in RGB LED color and brightness.
- * Stores last set values for API status reporting.
+ * @brief 内蔵RGB LEDの色と明るさを設定します。
+ * APIステータス報告用に、最後に設定された値を保存します。
  */
 void HardwareManager::setLedColor(uint8_t r, uint8_t g, uint8_t b, uint8_t brightness) {
     if (brightness > 0) _statusLed.setBrightness(brightness);
@@ -113,29 +117,37 @@ void HardwareManager::getLedColor(uint8_t &r, uint8_t &g, uint8_t &b, uint8_t &b
 }
 
 /**
- * @brief Visualizes system status using built-in NeoPixel.
- * - Connected: Breathing Green effect (~4sec period).
- * - Disconnected: Blinking Blue (500ms).
+ * @brief 内蔵NeoPixelを使用してシステムステータスを可視化します。
+ * - 接続済み: 呼吸する緑色のエフェクト (約4秒周期)。
+ * - 切断: 青色の点滅 (500ms)。
+ * - 無効: 黄色の点灯。
  */
-void HardwareManager::updateStatusLed(bool wifiConnected) {
+void HardwareManager::updateStatusLed(bool wifiEnabled, bool wifiConnected) {
     static unsigned long lastUpdate = 0;
     static bool state = false;
 
-    // Limit update frequency to ~30fps to reduce CPU/show() overhead
-    if (millis() - lastUpdate < 33) return;
-    lastUpdate = millis();
+    if (!wifiEnabled) {
+        setLedColor(255, 255, 0, 5); // Yellow solid (dimmed)
+        return;
+    }
 
     if (wifiConnected) {
-        // Breathing effect: Sine wave mapping brightness 0-10 (Dimmer green)
+        if (millis() - lastUpdate < 33) return; // 接続中は30fps
+        lastUpdate = millis();
+        // 呼吸エフェクト: 輝度を0-10にマッピングするサイン波 (控えめな緑)
         float duty = (sin(millis() * 0.0015f) + 1.0f) / 2.0f;
         uint8_t br = (uint8_t)(duty * 10);
         setLedColor(0, 255, 0, br);
     } else {
-        // Blink pattern: Blue toggle every 500ms
+        // 未接続・接続試行中は割り込み禁止時間を減らすため、更新頻度を劇的に下げる(100ms)
+        if (millis() - lastUpdate < 100) return;
+        lastUpdate = millis();
+
+        // 点滅パターン: 500msごとに青色を切り替え
         static unsigned long lastToggle = 0;
         if (millis() - lastToggle > 500) {
             state = !state;
-            state ? setLedColor(0, 0, 255, 20) : setLedColor(0, 0, 0);
+            state ? setLedColor(0, 0, 255, 10) : setLedColor(0, 0, 0);
             lastToggle = millis();
         }
     }

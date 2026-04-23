@@ -1,4 +1,4 @@
-# ESP32-S3 Remote I/O Device  
+# ESP32‑S3 Remote I/O Device  
 プロフェッショナル用途にも耐える、扱いやすいリモート I/O デバイス用ファームウェア  
 Professional‑grade yet easy‑to‑use firmware for remote I/O devices.
 
@@ -8,83 +8,43 @@ Professional‑grade yet easy‑to‑use firmware for remote I/O devices.
 
 # 日本語版
 
-# ESP32-S3 リモート I/O デバイス
-
-ESP32-S3 をベースにした、**デジタル入出力・アナログ入力（ADC）・PWM 出力を JSON で制御できるリモート I/O デバイス**です。  
-USB シリアルと HTTP API のどちらからでも同じ JSON コマンドで操作できるため、スクリプト・GUI・Excel・Node-RED など、好きな環境から扱えます。
-
-本ファームウェアは以下の 2 種類を提供します：
-
-- **USB 専用版（ESP32_S3_IO_DEVICE）**  
-  → 最もシンプルで高速。開発・組込み用途に最適。
-
-- **Wi‑Fi + USB 版（ESP32_S3_IO_DEVICE_NET）**  
-  → HTTP API / mDNS / Wi‑Fi 設定ポータル付き。リモート制御向け。
+## 概要
+ESP32‑S3 をベースにした、**デジタル入出力・アナログ入力（ADC）・PWM 出力を JSON で制御できるリモート I/O デバイス**用ファームウェアです。  
+USB シリアル（CDC）と HTTP API の両インターフェースを備え、スクリプト、GUI、Excel、Node‑RED など、あらゆる環境からシームレスに操作できます。
 
 ---
 
-## 主な特徴（共通）
+## 主な特徴
 
 - **統一された JSON API**  
   DIO / ADC / PWM を同じ形式で扱えるため、クライアント実装がシンプル。
 
-- **USB と HTTP のデュアルインターフェース（NET 版）**  
-  開発中は USB、運用時は HTTP と、状況に応じて柔軟に切り替え可能。
+- **USB と HTTP のデュアルインターフェース**  
+  開発中は USB、運用時は HTTP と柔軟に切り替え可能。
 
 - **堅牢な設計**  
   - BOOT ボタンでファクトリリセット  
-  - NVS による設定永続化  
+  - NVS による Wi‑Fi 設定の永続化  
   - ノンブロッキング処理で高い応答性
 
----
-
-# 2つのファームウェアの違い
-
-## USB 専用版（ESP32_S3_IO_DEVICE）
+- **視覚的な状態表示**  
+  NeoPixel LED による接続状態やエラーのエフェクト表示
 
 | 項目 | 内容 |
 |---|---|
-| 通信方式 | USB CDC（シリアル） |
-| API | JSON（1行ごと） |
-| Wi‑Fi | なし |
-| HTTP API | なし |
-| mDNS | なし |
-| LED | シンプルな状態表示のみ |
-| 初期設定 | USB を挿すだけで即利用可能 |
-| 用途 | 開発、組込み、PC 直結制御、Excel/Node‑RED/GUI 連携 |
-
-**特徴：**  
-- 最も軽量で高速  
-- ネットワーク不要  
-- 電源を入れた瞬間に使える  
-- USB 給電だけで動作
-
----
-
-## Wi‑Fi + USB 版（ESP32_S3_IO_DEVICE_NET）
-
-| 項目 | 内容 |
-|---|---|
-| 通信方式 | USB CDC + HTTP API |
-| API | JSON（USB / HTTP 共通） |
+| 通信方式 | USB CDC (Serial) + HTTP API |
 | Wi‑Fi | STA + AP モード |
 | HTTP API | `/api?cmd=...` |
-| mDNS | `http://ESP32_S3_IO_xxxxxx.local` |
-| LED | NeoPixel による状態エフェクト |
-| 初期設定 | AP モードで Wi‑Fi 設定 |
-| 用途 | リモート制御、IoT、スマホ操作、LAN 内制御 |
-
-**特徴：**  
-- スマホから設定可能  
-- ネットワーク越しに制御できる  
-- mDNS による簡単アクセス  
-- LED エフェクトで状態がわかりやすい
+| mDNS | `http://ESP32_S3_IO_XXXXXX.local` |
+| LED | NeoPixel 状態表示 (GPIO48) |
+| 初期設定 | AP モードによる Wi‑Fi 設定ポータル |
+| 用途 | 開発、組込み、リモート制御、IoT、LAN 制御 |
 
 ---
 
-# ハードウェア設定（共通）
+## ハードウェア設定
 
-| 機能 | ピン (ESP32-S3) |
+| 機能 | ピン (ESP32‑S3) |
 |---|---|
 | デジタル入力 | 4, 5, 6, 7, 8, 9 |
 | デジタル出力 | 10, 11, 12, 13, 14, 15 |
@@ -95,42 +55,37 @@ USB シリアルと HTTP API のどちらからでも同じ JSON コマンドで
 
 ---
 
-# はじめに
+## クイックスタート
 
-# USB 専用版の使い方（ESP32_S3_IO_DEVICE）
+### 1. 書き込み
+Arduino IDE または PlatformIO でファームウェアを書き込みます。
 
-### 1. 書き込み  
-Arduino IDE または PlatformIO で書き込み。
+---
 
-### 2. 接続  
-USB ケーブルを挿すだけで準備完了。
-
-### 3. シリアル通信  
-115200bps / 改行区切りの JSON を送信。
-
-例：
+### USB シリアルでの利用
+USB を PC に接続し、シリアルモニタ（115200bps）から JSON を送信します。
 
 ```json
-{"cmd":"set_do","pin_id":0,"value":1}
+{"cmd":"ping"}
 ```
 
 ---
 
-# Wi‑Fi + USB 版の使い方（ESP32_S3_IO_DEVICE_NET）
-
-### 1. 初回起動（AP モード）  
+### Wi‑Fi / HTTP での利用（初回設定）
 - SSID：`ESP32_S3_IO_XXXXXX`  
-  - **XXXXXX は MAC アドレス下位 3 バイトから生成**  
+  - **XXXXXX は MAC アドレス下位 3 バイトから生成**
 - `http://192.168.4.1` を開く  
 - Wi‑Fi 設定を保存
 
-### 2. 通常アクセス  
+---
+
+### 通常アクセス
 - `http://ESP32_S3_IO_XXXXXX.local`  
 - または DHCP で割り当てられた IP
 
 ---
 
-# API リファレンス（USB / HTTP 共通）
+## API リファレンス（USB / HTTP 共通）
 
 すべてのコマンドは以下形式：
 
@@ -138,20 +93,20 @@ USB ケーブルを挿すだけで準備完了。
 {"cmd": "コマンド名", ...}
 ```
 
-## Digital IO
+### Digital IO
 
 | コマンド | 説明 | 例 |
 |---|---|---|
 | `read_di` | デジタル入力を読む | `{"cmd":"read_di","pin_id":0}` |
 | `set_do` | デジタル出力を設定 | `{"cmd":"set_do","pin_id":0,"value":1}` |
 
-## ADC
+### ADC
 
 | コマンド | 説明 | 例 |
 |---|---|---|
 | `read_adc` | アナログ入力を読む | `{"cmd":"read_adc","pin_id":0}` |
 
-## PWM
+### PWM
 
 | コマンド | 説明 | 例 |
 |---|---|---|
@@ -159,7 +114,7 @@ USB ケーブルを挿すだけで準備完了。
 | `set_pwm_config` | 周波数/分解能設定 | `{"cmd":"set_pwm_config","freq":5000,"res":8}` |
 | `get_pwm_config` | 現在の設定取得 | `{"cmd":"get_pwm_config"}` |
 
-## LED（NET 版のみ）
+### LED
 
 | コマンド | 説明 | 例 |
 |---|---|---|
@@ -167,7 +122,7 @@ USB ケーブルを挿すだけで準備完了。
 | `set_led_mode` | モード切替 | `{"cmd":"set_led_mode","mode":"status"}` |
 | `get_led_state` | LED 状態取得 | `{"cmd":"get_led_state"}` |
 
-## システム
+### システム
 
 | コマンド | 説明 | 例 |
 |---|---|---|
@@ -178,9 +133,9 @@ USB ケーブルを挿すだけで準備完了。
 
 ---
 
-# Python からの利用例
+## Python からの利用例
 
-## USB 専用版
+### USB シリアル（CDC）
 
 ```python
 import serial, json, time
@@ -196,7 +151,7 @@ send({"cmd": "ping"})
 send({"cmd": "set_do", "pin_id": 0, "value": 1})
 ```
 
-## Wi‑Fi 版
+### HTTP API（Wi‑Fi 経由）
 
 ```python
 import requests
@@ -212,99 +167,60 @@ send({"cmd": "read_adc", "pin_id": 0})
 
 ---
 
-# プロジェクト構成
+## プロジェクト構成
 
 - `Config.h` — ピン定義・定数  
 - `HardwareManager` — IO 制御・LED エフェクト  
-- `AppNetworkManager` — WiFi / mDNS / NVS（NET 版）  
-- `WebHandler` — Web サーバ（NET 版）  
+- `AppNetworkManager` — Wi‑Fi / mDNS / NVS  
+- `WebHandler` — Web サーバ  
 - `CommandHandler` — JSON コマンド処理（USB / HTTP 共通）
 
 ---
 
-# ライセンス
-
+## ライセンス
 MIT License  
-詳細は LICENSE を参照してください。
+Copyright (c) 2026 Noritama‑Lab  
+詳細は LICENSE.md を参照してください。
 
 ---
 
 # English Version
 
-# ESP32-S3 Remote I/O Device
-This project provides firmware that turns an ESP32‑S3 into a **remote I/O device controllable via JSON commands**, supporting **Digital IO, ADC, and PWM**.  
-Both USB Serial and HTTP API use the same JSON command structure, making it easy to integrate with scripts, GUIs, Excel, Node‑RED, and more.
-
-Two firmware variants are available:
-
-- **USB‑Only Version (ESP32_S3_IO_DEVICE)**  
-  → The simplest and fastest option. Ideal for development and embedded use.
-
-- **Wi‑Fi + USB Version (ESP32_S3_IO_DEVICE_NET)**  
-  → Includes HTTP API, mDNS, and a Wi‑Fi setup portal. Designed for remote control.
+## Overview
+This firmware turns an ESP32‑S3 into a **remote I/O device controllable via JSON commands**, supporting **Digital IO, ADC, and PWM**.  
+It provides both **USB Serial (CDC)** and **HTTP API**, enabling seamless integration with scripts, GUIs, Excel, Node‑RED, and more.
 
 ---
 
-## Key Features (Common)
+## Key Features
 
 - **Unified JSON API**  
-  Digital IO / ADC / PWM all share the same command structure, keeping client code simple.
+  Digital IO / ADC / PWM all share the same command structure.
 
-- **Dual Interface (NET version)**  
-  Use USB during development and HTTP during deployment — switch freely as needed.
+- **Dual Interface: USB + HTTP**  
+  USB for development, HTTP for deployment — switch freely as needed.
 
 - **Robust Architecture**  
   - Factory reset via BOOT button  
-  - Persistent settings stored in NVS  
+  - Persistent Wi‑Fi settings stored in NVS  
   - Non‑blocking processing for high responsiveness
 
----
-
-# Differences Between the Two Firmware Variants
-
-## USB‑Only Version (ESP32_S3_IO_DEVICE)
+- **Visual Status Indication**  
+  NeoPixel LED shows connection status and error effects.
 
 | Item | Description |
 |---|---|
-| Communication | USB CDC (Serial) |
-| API | JSON (one command per line) |
-| Wi‑Fi | Not supported |
-| HTTP API | Not supported |
-| mDNS | Not supported |
-| LED | Simple status indication only |
-| Setup | Plug in USB and start using immediately |
-| Use Cases | Development, embedded systems, PC‑direct control, Excel/Node‑RED/GUI integration |
-
-**Highlights:**  
-- Fastest and lightest  
-- No network required  
-- Works instantly after power‑on  
-- Operates with USB power only
-
----
-
-## Wi‑Fi + USB Version (ESP32_S3_IO_DEVICE_NET)
-
-| Item | Description |
-|---|---|
-| Communication | USB CDC + HTTP API |
-| API | JSON (USB / HTTP shared) |
+| Communication | USB CDC (Serial) + HTTP API |
 | Wi‑Fi | STA + AP mode |
 | HTTP API | `/api?cmd=...` |
-| mDNS | `http://ESP32_S3_IO_xxxxxx.local` |
-| LED | NeoPixel status effects |
-| Setup | Wi‑Fi configuration via AP mode |
-| Use Cases | Remote control, IoT, smartphone access, LAN‑based automation |
-
-**Highlights:**  
-- Wi‑Fi setup via smartphone  
-- Remote control over the network  
-- Easy access via mDNS  
-- Clear visual feedback through LED effects
+| mDNS | `http://ESP32_S3_IO_XXXXXX.local` |
+| LED | NeoPixel status indicator (GPIO48) |
+| Initial Setup | Wi‑Fi configuration portal via AP mode |
+| Use Cases | Development, embedded systems, remote control, IoT, LAN automation |
 
 ---
 
-# Default Hardware Configuration (Common)
+## Hardware Configuration
 
 | Function | Pin (ESP32‑S3) |
 |---|---|
@@ -317,43 +233,37 @@ Two firmware variants are available:
 
 ---
 
-# Getting Started
+## Quick Start
 
-# USB‑Only Version (ESP32_S3_IO_DEVICE)
-
-### 1. Flash the Firmware  
+### 1. Flash the Firmware
 Upload using Arduino IDE or PlatformIO.
 
-### 2. Connect  
-Simply plug in the USB cable — no configuration required.
+---
 
-### 3. Serial Communication  
-115200 bps, JSON commands separated by newline.
-
-Example:
+### USB Serial Usage
+Connect via USB and send JSON commands at **115200 bps**.
 
 ```json
-{"cmd":"set_do","pin_id":0,"value":1}
+{"cmd":"ping"}
 ```
 
 ---
 
-# Wi‑Fi + USB Version (ESP32_S3_IO_DEVICE_NET)
-
-### 1. First Boot (AP Mode)  
+### Wi‑Fi / HTTP Usage (First‑time Setup)
 - SSID: `ESP32_S3_IO_XXXXXX`  
   - **XXXXXX is generated from the lower 3 bytes of the MAC address**
-- Connect to the AP  
-- Open `http://192.168.4.1`  
+- Open `http://192.168.4.1`
 - Save Wi‑Fi settings
 
-### 2. Normal Access  
+---
+
+### Normal Access
 - `http://ESP32_S3_IO_XXXXXX.local`  
 - Or the DHCP‑assigned IP address
 
 ---
 
-# API Reference (USB / HTTP Shared)
+## API Reference (USB / HTTP Shared)
 
 All commands follow this structure:
 
@@ -361,20 +271,20 @@ All commands follow this structure:
 {"cmd": "command_name", ...}
 ```
 
-## Digital IO
+### Digital IO
 
 | Command | Description | Example |
 |---|---|---|
 | `read_di` | Read digital input | `{"cmd":"read_di","pin_id":0}` |
 | `set_do` | Set digital output | `{"cmd":"set_do","pin_id":0,"value":1}` |
 
-## ADC
+### ADC
 
 | Command | Description | Example |
 |---|---|---|
 | `read_adc` | Read analog input | `{"cmd":"read_adc","pin_id":0}` |
 
-## PWM
+### PWM
 
 | Command | Description | Example |
 |---|---|---|
@@ -382,7 +292,7 @@ All commands follow this structure:
 | `set_pwm_config` | Set frequency/resolution | `{"cmd":"set_pwm_config","freq":5000,"res":8}` |
 | `get_pwm_config` | Get current config | `{"cmd":"get_pwm_config"}` |
 
-## LED (NET Version Only)
+### LED
 
 | Command | Description | Example |
 |---|---|---|
@@ -390,7 +300,7 @@ All commands follow this structure:
 | `set_led_mode` | Change LED mode | `{"cmd":"set_led_mode","mode":"status"}` |
 | `get_led_state` | Get LED state | `{"cmd":"get_led_state"}` |
 
-## System
+### System
 
 | Command | Description | Example |
 |---|---|---|
@@ -401,9 +311,9 @@ All commands follow this structure:
 
 ---
 
-# Python Usage Examples
+## Python Usage Examples
 
-## USB‑Only Version
+### USB Serial (CDC)
 
 ```python
 import serial, json, time
@@ -419,7 +329,7 @@ send({"cmd": "ping"})
 send({"cmd": "set_do", "pin_id": 0, "value": 1})
 ```
 
-## Wi‑Fi Version
+### HTTP API over Wi‑Fi
 
 ```python
 import requests
@@ -435,18 +345,17 @@ send({"cmd": "read_adc", "pin_id": 0})
 
 ---
 
-# Project Structure
+## Project Structure
 
 - `Config.h` — Pin definitions & constants  
 - `HardwareManager` — IO control & LED effects  
-- `AppNetworkManager` — Wi‑Fi / mDNS / NVS (NET version)  
-- `WebHandler` — Web server (NET version)  
+- `AppNetworkManager` — Wi‑Fi / mDNS / NVS  
+- `WebHandler` — Web server  
 - `CommandHandler` — Unified JSON command processor (USB / HTTP shared)
 
 ---
 
-# License
-
+## License
 MIT License  
-See LICENSE for details.
+Copyright (c) 2026 Noritama‑Lab
 

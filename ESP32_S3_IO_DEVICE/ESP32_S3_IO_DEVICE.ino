@@ -1,11 +1,11 @@
 /**
- * @file ESP32_S3_IO_DEVICE_NET.ino
- * @brief ESP32-S3 Remote IO Device Firmware
+ * @file ESP32_S3_IO_DEVICE.ino
+ * @brief ESP32-S3 リモートIOデバイス ファームウェア
  * 
- * Features:
- * - Digital/Analog IO & PWM control over Serial/HTTP API.
- * - Responsive Web UI for Network Configuration.
- * - Breathing status LED & Factory reset support.
+ * 機能:
+ * - シリアル/HTTP API経由のデジタル/アナログIOおよびPWM制御。
+ * - ネットワーク設定用のレスポンシブWeb UI。
+ * - ステータスLED（ホタル点滅）およびファクトリーリセット。
  */
 
 #include "Config.h"
@@ -15,17 +15,19 @@
 #include "CommandHandler.h"
 #include "tusb.h"
 
-/** @brief Hardware and Service Initialization. */
+/** @brief ハードウェアおよびサービスの初期化。 */
 void setup() {
     Serial.begin(115200);
+    delay(500); // シリアル初期化待ち
+    Serial.println("\n\n=== ESP32-S3 IO DEVICE BOOT ===");
     Hardware.begin();
     AppNet.begin();
     Web.begin();
 }
 
-/** @brief Main processing loop. Handles USB, Web Clients, and Serial commands. */
+/** @brief メイン処理ループ。USB、Webクライアント、およびシリアルコマンドを処理します。 */
 void loop() {
-    tud_task(); // TinyUSB task for CDC
+    tud_task(); // CDC用TinyUSBタスク
     Web.handle();
     AppNet.loop();
     
@@ -34,7 +36,7 @@ void loop() {
         ESP.restart();
     }
 
-    // Process Serial JSON Commands
+    // シリアルJSONコマンドの処理
     if (Serial.available()) {
         String line = Serial.readStringUntil('\n');
         line.trim();

@@ -13,6 +13,7 @@ public:
     const WifiConfig& getConfig() const { return _config; }
     String getDeviceName() const { return _uniqueName; }
     void setLedStatusMode(bool mode);
+    void setWiFiEnabled(bool enabled);
     bool isConnected() const;
     static void WiFiEvent(WiFiEvent_t event);
 
@@ -21,6 +22,8 @@ private:
     WifiConfig _config;
     Preferences _prefs;
     bool _wifiConnected = false;
+    bool _isConnecting = false;
+    bool _wifiEnabled = true;
     unsigned long _reconnectAttemptTime = 0;
 
     void loadConfig();

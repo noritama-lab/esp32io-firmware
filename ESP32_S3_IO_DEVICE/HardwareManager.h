@@ -1,6 +1,6 @@
 /**
  * @file HardwareManager.h
- * @brief Peripheral control (GPIO, ADC, PWM, NeoPixel) for ESP32-S3.
+ * @brief ESP32-S3の周辺機器制御 (GPIO, ADC, PWM, NeoPixel)。
  * @copyright Copyright (c) 2024 norit. Licensed under the MIT License.
  */
 #ifndef HARDWARE_MANAGER_H
@@ -11,15 +11,16 @@
 
 /**
  * @class HardwareManager
- * @brief Abstracts hardware interactions.
+ * @brief ハードウェアとのやり取りを抽象化します。
  */
 class HardwareManager {
 public:
     HardwareManager();
-    void begin(); // Initializes pins and peripherals
+    void begin(); // ピンと周辺機器を初期化します
     
     // --- DIO ---
     int readDI(int id);
+    int readDO(int id);
     void writeDO(int id, int value);
     
     // --- ADC ---
@@ -33,10 +34,10 @@ public:
     int getFreq() const { return _pwmSettings.freq; }
     int getRes() const { return _pwmSettings.res; }
 
-    // --- Built-in RGB LED ---
+    // --- 内蔵 RGB LED ---
     void setLedColor(uint8_t r, uint8_t g, uint8_t b, uint8_t brightness = 0);
-    /** @brief Updates LED with breathing effect or blink pattern based on connection status. */
-    void updateStatusLed(bool wifiConnected);
+    /** @brief 接続ステータスに基づいて、LEDを呼吸エフェクトまたは点滅パターンで更新します。 */
+    void updateStatusLed(bool wifiEnabled, bool wifiConnected);
     void getLedColor(uint8_t &r, uint8_t &g, uint8_t &b, uint8_t &br) const;
 
 private:

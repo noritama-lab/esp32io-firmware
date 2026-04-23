@@ -1,19 +1,19 @@
 /**
  * @file CommandHandler.cpp
- * @brief JSON command processing engine.
+ * @brief JSONコマンド処理エンジン。
  * @copyright Copyright (c) 2024 norit. Licensed under the MIT License.
  */
 #include "CommandHandler.h"
 #include "NetworkManager.h"
 
 /**
- * @brief Entry point for processing commands from Serial or HTTP.
- * Dispatches requests to HardwareManager and formats JSON responses.
+ * @brief シリアルまたはHTTPからのコマンドを処理するエントリポイント。
+ * リクエストをHardwareManagerに振り分け、JSONレスポンスを構成します。
  */
 void CommandHandler::process(JsonVariantConst req, JsonDocument& res) {
     const char* cmd = req["cmd"] | "";
     
-    // --- DIO / ADC / PWM Controls ---
+    // --- DIO / ADC / PWM 制御 ---
     if (strcmp(cmd, "read_di") == 0) {
         int id = req["pin_id"] | -1;
         if (!checkRange(id, DIO_IN_COUNT, res, cmd)) return;
@@ -28,8 +28,8 @@ void CommandHandler::process(JsonVariantConst req, JsonDocument& res) {
         res["status"] = "ok";
     } 
     /**
-     * @brief Aggregates all IO states into a single JSON object.
-     * Useful for dashboard synchronization.
+     * @brief すべてのIO状態を1つのJSONオブジェクトに集約します。
+     * ダッシュボードの同期に便利です。
      */
     else if (strcmp(cmd, "get_io_state") == 0) {
         res["status"] = "ok";
@@ -37,7 +37,7 @@ void CommandHandler::process(JsonVariantConst req, JsonDocument& res) {
         for (int i = 0; i < DIO_IN_COUNT; i++) di.add(Hardware.readDI(i));
         
         JsonArray doo = res["dio_out"].to<JsonArray>();
-        for (int i = 0; i < DIO_OUT_COUNT; i++) doo.add(digitalRead(DIO_OUT_PINS[i]));
+        for (int i = 0; i < DIO_OUT_COUNT; i++) doo.add(Hardware.readDO(i));
 
         JsonArray adc = res["adc"].to<JsonArray>();
         for (int i = 0; i < ADC_COUNT; i++) adc.add(Hardware.readADCValue(i));
@@ -131,8 +131,8 @@ void CommandHandler::process(JsonVariantConst req, JsonDocument& res) {
         res["message"] = "pong";
     }
     /**
-     * @brief Returns a list of available API commands.
-     * Self-documenting API.
+     * @brief 利用可能なAPIコマンドの一覧を返します。
+     * 自己文書化API。
      */
     else if (strcmp(cmd, "help") == 0) {
         res["status"] = "ok";

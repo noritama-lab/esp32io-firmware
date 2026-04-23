@@ -1,6 +1,6 @@
 /**
  * @file WebHandler.cpp
- * @brief Web Server implementation for UI and API endpoints.
+ * @brief UIおよびAPIエンドポイント用のWebサーバー実装。
  * @copyright Copyright (c) 2024 norit. Licensed under the MIT License.
  */
 #include "WebHandler.h"
@@ -11,7 +11,7 @@
 static WebServer server(80);
 
 /**
- * @brief Sets up Web Server routes.
+ * @brief Webサーバーのルートを設定します。
  */
 void WebHandler::begin() {
     server.on("/", HTTP_GET, [this]() { handleRoot(); });
@@ -20,9 +20,14 @@ void WebHandler::begin() {
     server.begin();
 }
 
-/** @brief Must be called in main loop to handle clients. */
+/** @brief クライアントを処理するためにメインループ内で呼び出す必要があります。 */
 void WebHandler::handle() {
     server.handleClient();
+
+    if (_pendingRestart) {
+        delay(1000);
+        ESP.restart();
+    }
 }
 
 void WebHandler::handleRoot() {
@@ -43,6 +48,7 @@ void WebHandler::handleSave() {
     cfg.gateway.fromString(server.arg("gateway"));
     cfg.subnet.fromString(server.arg("subnet"));
     cfg.ledStatusMode = (server.arg("led_mode") == "status");
+    cfg.wifiEnabled = (server.arg("wifi_en") == "1");
 
     AppNet.saveConfig(cfg);
 
@@ -52,8 +58,8 @@ void WebHandler::handleSave() {
 }
 
 /**
- * @brief Bridges HTTP requests to the CommandHandler.
- * Supports POST JSON or GET query parameters.
+ * @brief HTTPリクエストをCommandHandlerに橋渡しします。
+ * POST JSONまたはGETクエリパラメータをサポートします。
  */
 void WebHandler::handleApi() {
     JsonDocument req, res;
@@ -61,7 +67,7 @@ void WebHandler::handleApi() {
     if (server.method() == HTTP_POST && server.hasArg("plain")) {
         deserializeJson(req, server.arg("plain"));
     } else {
-        // Parse query params. Detect and cast numeric values.
+        // クエリパラメータを解析。数値を検出してキャストします。
         for (int i = 0; i < server.args(); i++) {
             String name = server.argName(i);
             String val = server.arg(i);
@@ -81,13 +87,13 @@ void WebHandler::handleApi() {
 }
 
 /**
- * @brief Renders the Network Configuration Page.
- * Uses a modern responsive CSS design.
+ * @brief ネットワーク設定ページをレンダリングします。
+ * モダンでレスポンシブなCSSデザインを使用しています。
  */
 String WebHandler::makeConfigPage() {
     const WifiConfig& cfg = AppNet.getConfig();
     String html;
-    html.reserve(4096); // Pre-allocate buffer to prevent memory fragmentation
+    html.reserve(4096); // メモリ断片化を防ぐためにバッファを事前割り当て
     html += "<!DOCTYPE html><html><head><meta charset='UTF-8'>";
     html += "<meta name='viewport' content='width=device-width,initial-scale=1.0'>";
     html += "<style>";
@@ -109,6 +115,11 @@ String WebHandler::makeConfigPage() {
     html += "<label>WiFi SSID</label><input name='ssid' type='text' value='" + cfg.ssid + "' placeholder='SSID'>";
     html += "<label>WiFi Password</label><input name='pass' type='password' placeholder='Leave empty to keep current'>";
     
+    html += "<label>Wireless Radio</label><div class='row'>";
+    html += "<label><input type='radio' name='wifi_en' value='1' " + String(cfg.wifiEnabled ? "checked" : "") + "> Enabled</label>";
+    html += "<label><input type='radio' name='wifi_en' value='0' " + String(cfg.wifiEnabled ? "" : "checked") + "> AP Only (STA Disabled)</label>";
+    html += "</div>";
+
     html += "<label>IP Addressing</label><div class='row'>";
     html += "<label><input type='radio' name='ip_mode' value='dhcp' " + String(cfg.useStatic ? "" : "checked") + " onclick='toggleStatic(false)'> DHCP</label>";
     html += "<label><input type='radio' name='ip_mode' value='static' " + String(cfg.useStatic ? "checked" : "") + " onclick='toggleStatic(true)'> Static IP</label>";
