@@ -48,8 +48,7 @@ void WebHandler::handleSave() {
 
     String html = "<html><body><h3>Settings Saved</h3><p>Device is restarting in 1 sec...</p></body></html>";
     server.send(200, "text/html", html);
-    delay(1000);
-    ESP.restart();
+    _pendingRestart = true;
 }
 
 /**

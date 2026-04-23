@@ -45,7 +45,7 @@ void HardwareManager::writeDO(int id, int value) {
 int HardwareManager::readADCValue(int id) {
     if (id < 0 || id >= ADC_COUNT) return 0;
     long sum = 0;
-    for (int i = 0; i < ADC_SAMPLES; i++) sum += analogRead(ADC_PINS[id]);
+    for (int i = 0; i < ADC_SAMPLES; i++) sum += analogReadMilliVolts(ADC_PINS[id]);
     return static_cast<int>(sum / ADC_SAMPLES);
 }
 
