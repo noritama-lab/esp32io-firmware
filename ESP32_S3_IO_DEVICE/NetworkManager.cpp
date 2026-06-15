@@ -1,34 +1,39 @@
 /**
  * @file NetworkManager.cpp
  * @brief WiFi、mDNS、およびNVS管理の実装。
+ * 
+ * このファイルは、ESP32のWiFi接続（ステーションモードおよびアクセスポイントモード）、
+ * mDNSサービス、および不揮発性ストレージ (NVS) を介した設定の永続化を管理します。
+ * ネットワーク関連のイベント処理と再接続ロジックも含まれています。
  * @copyright Copyright (c) 2024 norit. Licensed under the MIT License.
  */
 #include "NetworkManager.h"
 #include "HardwareManager.h"
 #include <ESPmDNS.h>
 #include <esp_wifi.h>
-#include "soc/soc.h"
-#include "soc/rtc_cntl_reg.h"
 #include <esp_mac.h>
 
-// プライベートローカルハンドラのプロトタイプ
+/**
+ * @brief ファクトリーリセット処理のプロトタイプ宣言。
+ * BOOTボタンの長押しを監視し、NVS設定をクリアしてデバイスを再起動します。
+ */
 void handleFactoryReset();
 
-// WiFiイベント処理用の静的メンバ
+/**
+ * @brief WiFiイベントを処理するための静的コールバック関数。
+ * @param event 発生したWiFiイベントのタイプ。
+ */
 void AppNetworkManager::WiFiEvent(WiFiEvent_t event) {
     AppNet.handleWiFiEvent(event);
 }
+
 /**
- * @brief ネットワークサービスを起動します。
- * WiFiスタックをリセットし、AP、mDNSを開始し、設定されている場合はSTAに接続します。
+ * @brief ネットワークサービスを開始します。
+ * NVSから設定をロードし、WiFi（APおよびSTAモード）、mDNSを初期化します。
  */
 void AppNetworkManager::begin() {
     loadConfig();
     
-    Serial.begin(115200);
-    Serial.println("\n--- System Booting ---");
-    Serial.printf("Reset reason: %d\n", esp_reset_reason());
-
     // 接続速度を優先するため、前回の接続情報をキャッシュとして保持・利用する
     WiFi.persistent(true);
     WiFi.onEvent(AppNetworkManager::WiFiEvent); // イベントハンドラを登録
@@ -37,23 +42,23 @@ void AppNetworkManager::begin() {
     uint8_t mac[6];
     esp_efuse_mac_get_default(mac); // ハードウェア固有のベースMACアドレスを直接取得
     char suffix[7];
-    // 衝突確率を最小限にするため、下位3バイト（24ビット）を使用
+    // 衝突確率を最小限にするため、MACアドレスの下位3バイト（24ビット）を使用
     sprintf(suffix, "%02X%02X%02X", mac[3], mac[4], mac[5]);
     _uniqueName = String(DEVICE_NAME_BASE) + "_" + suffix;
 
-    // ネットワークの初期化をシンプルに（過度なMode切替はスタックを不安定にします）
+    // WiFiモードをAP+STAに設定し、ホスト名とAPのSSIDを設定
     WiFi.mode(WIFI_AP_STA);
     WiFi.setHostname(_uniqueName.c_str());
     WiFi.softAP(_uniqueName.c_str(), DEFAULT_AP_PASS);
     
-    // 省電力モードをオフにすることで、シリアル通信中の切断を防ぐ（最重要）
+    // WiFiの安定性とパフォーマンスを向上させるための設定
     WiFi.setAutoReconnect(true);
-    WiFi.setSleep(false);
-    WiFi.setTxPower(WIFI_POWER_19_5dBm); // 出力を最大に戻して接続の感度を向上させる
+    WiFi.setSleep(false); // 省電力モードを無効化し、通信の安定性を優先
+    WiFi.setTxPower(WIFI_POWER_19_5dBm); // 送信電力を最大に設定し、接続範囲と安定性を向上
 
-    // 接続速度を最大化する設定（キャッシュされたチャンネルを優先的に探す）
-    WiFi.setScanMethod(WIFI_FAST_SCAN);
-    WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
+    // 接続速度を最適化するためのスキャンおよびソート方法の設定
+    WiFi.setScanMethod(WIFI_FAST_SCAN); // 高速スキャンを有効化
+    WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL); // 信号強度に基づいてAPをソート
 
     if (MDNS.begin(_uniqueName.c_str())) {
         Serial.println("mDNS responder started");
@@ -61,8 +66,8 @@ void AppNetworkManager::begin() {
     }
 
     if (_config.wifiEnabled) {
-        // 起動直後の即時接続を避け、loop()のタイマーに任せることで
-        // 無線チップが安定し、AP(iPhone)が認識しやすくなる時間を稼ぐ
+        // 起動直後のSTA接続は、無線チップの安定化とAPの認識時間を考慮し、
+        // loop()内のタイマーによって遅延させて開始します。
         _reconnectAttemptTime = millis();
     } else {
         setWiFiEnabled(false);
@@ -70,12 +75,15 @@ void AppNetworkManager::begin() {
 }
 
 void AppNetworkManager::loop() {
+    // LEDステータスモードが有効な場合、WiFi接続状態に応じてLEDを更新
     if (_config.ledStatusMode) {
         Hardware.updateStatusLed(_config.wifiEnabled, isConnected());
     }
+    // ファクトリーリセットのボタン監視
     handleFactoryReset();
 
-    // 接続が有効で、未接続かつ現在接続試行中でない場合のみ、一定間隔で再接続を試みる
+    // WiFiが有効で、未接続、かつ現在接続試行中でない場合に、
+    // 一定間隔で再接続を試みます。
     if (_config.wifiEnabled && !_wifiConnected && !_isConnecting && _config.ssid.length() > 0) {
         if (millis() - _reconnectAttemptTime > WIFI_RECONNECT_INTERVAL_MS) {
             _reconnectAttemptTime = millis();
@@ -85,8 +93,9 @@ void AppNetworkManager::loop() {
 }
 
 /**
- * @brief NVS (フラッシュ) からWiFi/ネットワーク設定を読み込みます。
- * 設定が見つからない場合はデフォルト値が適用されます。
+ * @brief NVS (不揮発性ストレージ) からWiFiおよびネットワーク設定を読み込みます。
+ * 設定が見つからない場合、または初めての起動の場合は、デフォルト値が適用されます。
+ * @note 設定は`_config`メンバ変数に格納されます。
  */
 void AppNetworkManager::loadConfig() {
     _prefs.begin(PREF_NS, true);
@@ -98,9 +107,14 @@ void AppNetworkManager::loadConfig() {
     _config.subnet.fromString(_prefs.getString("w_sub", DEFAULT_WIFI_SUBNET));
     _config.ledStatusMode = _prefs.getBool("w_led", true);
     _config.wifiEnabled = _prefs.getBool("w_en", true);
+    _config.dioOutInverted = _prefs.getBool("dio_inv", DEFAULT_DIO_OUT_INVERTED);
     _prefs.end();
 }
 
+/**
+ * @brief 現在のWiFiおよびネットワーク設定をNVS (不揮発性ストレージ) に保存します。
+ * @param cfg 保存するWifiConfig構造体。
+ */
 void AppNetworkManager::saveConfig(const WifiConfig& cfg) {
     _prefs.begin(PREF_NS, false);
     _prefs.putString("w_ssid", cfg.ssid);
@@ -111,20 +125,23 @@ void AppNetworkManager::saveConfig(const WifiConfig& cfg) {
     _prefs.putString("w_sub", cfg.subnet.toString());
     _prefs.putBool("w_led", cfg.ledStatusMode);
     _prefs.putBool("w_en", cfg.wifiEnabled);
+    _prefs.putBool("dio_inv", cfg.dioOutInverted);
     _prefs.end();
     _config = cfg;
 }
 
 /**
  * @brief WiFi接続試行を開始します。
- * この関数は begin() 内および再接続ロジックから呼び出されます。
+ * 内部的に`reconnect()`メソッドを呼び出します。
  */
 void AppNetworkManager::connect() {
-    reconnect(); // 再接続ロジックに委譲
+    reconnect();
 }
 
 /**
- * @brief WiFi再接続を処理する内部メソッド。
+ * @brief WiFiへの再接続を試みます。
+ * 既に接続中または接続試行中の場合は何もしません。
+ * 静的IP設定が有効な場合は、その設定を適用します。
  */
 void AppNetworkManager::reconnect() {
     // 重複呼び出し防止
@@ -133,7 +150,7 @@ void AppNetworkManager::reconnect() {
     
     // すでに内部で接続試行が走っている場合に設定を上書きしようとするとエラーが出るため、
     // 状態をリセットしてから開始する。
-    if (WiFi.status() == WL_DISCONNECTED) {
+    if (WiFi.status() == WL_DISCONNECTED || WiFi.status() == WL_NO_SHIELD) { // WL_NO_SHIELDも考慮
         WiFi.disconnect(false);
     }
 
@@ -145,12 +162,14 @@ void AppNetworkManager::reconnect() {
     Serial.print("Connecting to WiFi: ");
     Serial.println(_config.ssid);
 
-    // 接続開始。ここからイベント待ちになる
+    // WiFi接続を開始。結果はイベントハンドラで処理されます。
     WiFi.begin(_config.ssid.c_str(), _config.pass.c_str());
 }
 
 /**
  * @brief 各種WiFiイベントを処理します。
+ * WiFiの接続、切断、IPアドレス取得などのイベントに応じて、内部状態を更新します。
+ * @param event 発生したWiFiイベントのタイプ。
  */
 void AppNetworkManager::handleWiFiEvent(WiFiEvent_t event) {
     switch (event) {
@@ -161,7 +180,6 @@ void AppNetworkManager::handleWiFiEvent(WiFiEvent_t event) {
             Serial.println("WiFi STA Disconnected.");
             _wifiConnected = false;
             _isConnecting = false; 
-            // 切断時はフラグを下ろして、loop()による次回の再試行を許可する
             break;
         case ARDUINO_EVENT_WIFI_STA_GOT_IP:
             Serial.print("WiFi STA Connected. IP: ");
@@ -178,15 +196,17 @@ void AppNetworkManager::handleWiFiEvent(WiFiEvent_t event) {
 }
 
 /**
- * @brief ファクトリーリセットのためにBOOTボタンを監視します。
- * 5秒間長押しされると実行されます。赤色LEDの点滅で視覚的なフィードバックを提供します。
+ * @brief BOOTボタンの長押しを監視し、ファクトリーリセットを実行します。
+ * BOOTボタンが`FACTORY_RESET_TIME`（デフォルト5秒）以上長押しされた場合、
+ * NVSに保存されているすべての設定をクリアし、デバイスを再起動します。
+ * 視覚的なフィードバックとして、内蔵RGB LEDが赤色で高速点滅します。
  */
 void handleFactoryReset() {
     static unsigned long start = 0;
     
-    // 起動直後（5秒以内）はシリアル接続によるノイズを拾いやすいため、判定をスキップ
+    // 起動直後（5秒以内）は誤検出を防ぐため、ボタン監視をスキップします。
     if (millis() < 5000) return;
-
+    
     if (digitalRead(BOOT_BUTTON_PIN) == LOW) { // ボタン押下
         if (start == 0) start = millis();
         if (millis() - start > FACTORY_RESET_TIME) {
@@ -204,7 +224,10 @@ void handleFactoryReset() {
 }
 
 /**
- * @brief Wi-Fiの有効/無効を切り替える。無効時は無線チップをオフにして電力と干渉を抑える。
+ * @brief WiFi機能を有効または無効にします。
+ * WiFiを無効にすると、STAモードが停止され、APモードのみが維持されます。
+ * これにより、電力消費と無線干渉を低減できます。
+ * @param enabled trueの場合WiFiを有効にし、falseの場合無効にします。
  */
 void AppNetworkManager::setWiFiEnabled(bool enabled) {
     _config.wifiEnabled = enabled;
@@ -224,17 +247,20 @@ void AppNetworkManager::setWiFiEnabled(bool enabled) {
 AppNetworkManager AppNet;
 
 /**
- * @brief Returns the current WiFi connection status.
+ * @brief 現在のWiFi接続状態を返します。
+ * @return trueの場合WiFiに接続されており、falseの場合接続されていません。
  */
 bool AppNetworkManager::isConnected() const {
     return _wifiConnected;
 }
 
 /**
- * @brief Sets the LED status mode and saves it to NVS.
+ * @brief LEDの動作モード（システムステータス表示または手動制御）を設定し、NVSに保存します。
+ * @param mode trueの場合、LEDはWiFi接続ステータスを表示します。
+ *             falseの場合、LEDはAPI経由での手動制御モードになります。
  */
 void AppNetworkManager::setLedStatusMode(bool mode) {
-    // 現在のモードと同じなら、書き込みを行わずに復帰する
+    // 現在のモードと同じであれば、NVSへの書き込みをスキップします。
     if (_config.ledStatusMode == mode) return;
 
     _config.ledStatusMode = mode;
