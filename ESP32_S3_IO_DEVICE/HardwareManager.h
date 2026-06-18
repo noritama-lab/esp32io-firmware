@@ -15,7 +15,7 @@
 #include <Adafruit_BME280.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_SSD1306.h>
-#include <Adafruit_VL53L0X.h>
+#include <Adafruit_VL53L1X.h>
 #include <Wire.h>
 
 /**
@@ -124,6 +124,12 @@ public:
 
     // --- I2C ---
     /**
+     * @brief I2Cバス上に指定したアドレスのデバイスが存在するか確認します。
+     * @param address 確認するI2Cアドレス。
+     * @return デバイスが応答した場合はtrue。
+     */
+    bool probeDevice(uint8_t address);
+    /**
      * @brief I2Cバス上のデバイスをスキャンし、見つかったデバイスのアドレスをリストアップします。
      * @param foundDevices 見つかったデバイスのアドレスを格納する配列。
      * @param count 見つかったデバイスの数を格納する参照変数。
@@ -164,11 +170,11 @@ public:
      */
     bool getMPU6050Data(float accel[3], float gyro[3]);
     /**
-     * @brief VL53L0X距離センサーから距離データを読み取ります。
+     * @brief VL53L1X距離センサーから距離データを読み取ります。
      * @param mm 読み取られた距離 (ミリメートル) を格納するuint16_t参照変数。
-     * @return VL53L0Xが初期化されており、有効な距離データが読み取れた場合はtrue、それ以外はfalse。
+     * @return VL53L1Xが初期化されており、有効な距離データが読み取れた場合はtrue、それ以外はfalse。
      */
-    bool getVL53L0XDistance(uint16_t &mm);
+    bool getVL53L1XDistance(uint16_t &mm);
     /**
      * @brief OLEDディスプレイにテキストを表示します。
      * @param text 表示する文字列。
@@ -179,9 +185,17 @@ public:
      */
     void updateOLED(const char* text, int x = 0, int y = 0, int size = 1, bool clear = true);
 
+    // --- デバイス状態取得 ---
+    /** @brief 各デバイスが正常に初期化され、通信可能かどうかを返します。 */
+    bool isBmeReady() const { return _bmeInit; }
+    bool isMpuReady() const { return _mpuInit; }
+    bool isVl53Ready() const { return _vl53Init; }
+    bool isOledReady() const { return _oledInit; }
+
 private:
     Adafruit_NeoPixel _statusLed;
     PwmSettings _pwmSettings;
+    I2CSettings _i2cSettings; // I2C設定を保持
     /**
      * @brief 指定された分解能におけるPWMの最大デューティ値を計算します。
      * @param res PWMの分解能 (ビット数)。
@@ -193,7 +207,7 @@ private:
     Adafruit_BME280 _bme;
     Adafruit_MPU6050 _mpu;
     Adafruit_SSD1306 _display;
-    Adafruit_VL53L0X _vl53;
+    Adafruit_VL53L1X _vl53;
     bool _bmeInit = false, _mpuInit = false, _oledInit = false, _vl53Init = false;
 };
 

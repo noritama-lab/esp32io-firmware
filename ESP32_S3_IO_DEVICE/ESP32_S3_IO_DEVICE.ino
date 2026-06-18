@@ -29,7 +29,6 @@ void setup() {
     Serial.begin(115200);
     delay(500); 
     Serial.println("\n\n=== ESP32-S3 IO DEVICE BOOT ===");
-    Serial.printf("Reset reason: %d\n", esp_reset_reason());
 
     // 1. ネットワークマネージャーを初期化し、NVSから設定をロード
     AppNet.begin(); 

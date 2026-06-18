@@ -24,9 +24,16 @@ const int BOOT_BUTTON_PIN = 0;   // 内蔵Bootボタン (ファクトリーリ�
 const int RGB_PIN         = 38;  // 内蔵WS2812 (NeoPixel)
 
 // --- I2C 設定 ---
-const int I2C_SDA          = 40;
-const int I2C_SCL          = 41;
-const uint32_t I2C_FREQ    = 100000; // 100kHz
+const int DEFAULT_I2C_SDA          = 40;
+const int DEFAULT_I2C_SCL          = 41;
+const uint32_t DEFAULT_I2C_FREQ    = 100000; // 100kHz
+
+// --- I2C デバイスアドレス ---
+const uint8_t ADDR_BME280_A        = 0x76;
+const uint8_t ADDR_BME280_B        = 0x77;
+const uint8_t ADDR_MPU6050         = 0x68;
+const uint8_t ADDR_VL53L1X         = 0x29;
+const uint8_t ADDR_OLED            = 0x3C;
 
 // --- ループ反復用ヘルパーマクロ ---
 #define DIO_IN_COUNT   (sizeof(DIO_IN_PINS)/sizeof(DIO_IN_PINS[0]))
@@ -78,6 +85,16 @@ struct PwmSettings {
     int freq;
     int res;
     int duties[PWM_COUNT]; /**< 各PWMチャネルの現在のデューティ値。 */
+};
+
+/**
+ * @brief I2Cバスの設定を保持する構造体。
+ * SDAピン、SCLピン、およびバス周波数を管理します。
+ */
+struct I2CSettings {
+    int sda; /**< I2Cデータピン。 */
+    int scl; /**< I2Cクロックピン。 */
+    uint32_t freq; /**< I2Cバス周波数 (Hz)。 */
 };
 
 #endif

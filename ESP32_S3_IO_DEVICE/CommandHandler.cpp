@@ -116,14 +116,21 @@ void CommandHandler::process(JsonVariantConst req, JsonDocument& res) {
     else if (strcmp(cmd, "get_sensors") == 0) { // 接続されているセンサーデータの取得
         res["status"] = "ok";
         
+        // 各デバイスのオンライン状態を報告
+        JsonObject st = res["inventory"].to<JsonObject>();
+        st["bme280"] = Hardware.isBmeReady();
+        st["mpu6050"] = Hardware.isMpuReady();
+        st["vl53l1x"] = Hardware.isVl53Ready();
+        st["oled"] = Hardware.isOledReady();
+
         float t, h, p;
-        if (Hardware.getBME280Data(t, h, p)) { // BME280センサーデータ
+        if (Hardware.getBME280Data(t, h, p)) {
             JsonObject bme = res["bme280"].to<JsonObject>();
             bme["temp"] = t; bme["hum"] = h; bme["press"] = p;
         }
 
         float acc[3], gyr[3];
-        if (Hardware.getMPU6050Data(acc, gyr)) { // MPU6050センサーデータ
+        if (Hardware.getMPU6050Data(acc, gyr)) {
             JsonObject mpu = res["mpu6050"].to<JsonObject>();
             JsonArray a = mpu["accel"].to<JsonArray>();
             JsonArray g = mpu["gyro"].to<JsonArray>();
@@ -131,8 +138,9 @@ void CommandHandler::process(JsonVariantConst req, JsonDocument& res) {
         }
 
         uint16_t dist;
-        if (Hardware.getVL53L0XDistance(dist)) { // VL53L0X距離センサーデータ
-            res["vl53l0x"]["distance"] = dist;
+        if (Hardware.getVL53L1XDistance(dist)) {
+            JsonObject vl = res["vl53l1x"].to<JsonObject>();
+            vl["distance"] = dist;
         }
     }
     else if (strcmp(cmd, "set_oled") == 0) { // OLEDディスプレイへのテキスト表示

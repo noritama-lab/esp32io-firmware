@@ -17,6 +17,10 @@ HardwareManager::HardwareManager()
     // PWM設定のデフォルト値を初期化
     _pwmSettings.freq = DEFAULT_PWM_FREQ;
     _pwmSettings.res = DEFAULT_PWM_RES;
+    // I2C設定のデフォルト値を初期化
+    _i2cSettings.sda = DEFAULT_I2C_SDA;
+    _i2cSettings.scl = DEFAULT_I2C_SCL;
+    _i2cSettings.freq = DEFAULT_I2C_FREQ;
     for(int i=0; i<PWM_COUNT; i++) _pwmSettings.duties[i] = 0;
 }
 
@@ -35,13 +39,47 @@ void HardwareManager::begin() {
         writeDO(i, 0); // ロード済みの設定に基づき、論理0(OFF)を物理ピンに反映
     }
     applyPwmConfig(_pwmSettings.freq, _pwmSettings.res);
-    Wire.begin(I2C_SDA, I2C_SCL, I2C_FREQ);
+    Wire.begin(_i2cSettings.sda, _i2cSettings.scl, _i2cSettings.freq);
+    delay(200); // I2Cバスの安定化とデバイスの起動待ちを少し延長
 
-    // I2Cデバイスの初期化試行 (配線されていない場合は初期化フラグはfalseのまま)
-    _bmeInit = _bme.begin(0x76, &Wire) || _bme.begin(0x77, &Wire);
-    _mpuInit = _mpu.begin(0x68, &Wire);
-    _vl53Init = _vl53.begin();
-    _oledInit = _display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+    // --- I2Cデバイスの初期化 (追加時はここを編集) ---
+    
+    // BME280: 温度・湿度・気圧
+    if (probeDevice(ADDR_BME280_A) || probeDevice(ADDR_BME280_B)) {
+        _bmeInit = _bme.begin(probeDevice(ADDR_BME280_A) ? ADDR_BME280_A : ADDR_BME280_B, &Wire);
+    }
+
+    // MPU6050: 加速度・ジャイロ
+    if (probeDevice(ADDR_MPU6050)) {
+        _mpuInit = _mpu.begin(ADDR_MPU6050, &Wire);
+    }
+
+    // VL53L1X: 距離
+    if (probeDevice(ADDR_VL53L1X)) {
+        // 初期化前にバスを一度落ち着かせる
+        Wire.setClock(100000); 
+        delay(200);
+        for (int retry = 0; retry < 3; retry++) {
+            if (_vl53.begin(ADDR_VL53L1X, &Wire)) {
+                _vl53Init = true;
+                _vl53.setTimingBudget(50); // 50ms
+                _vl53.startRanging();
+                break;
+            }
+            if (retry < 2) {
+                delay(200); // 失敗時は少し長めに待機
+            } else {
+            }
+        }
+    }
+
+    // SSD1306: OLEDディスプレイ
+    if (probeDevice(ADDR_OLED)) {
+        _oledInit = _display.begin(SSD1306_SWITCHCAPVCC, ADDR_OLED);
+        delay(50);
+        _display.clearDisplay();
+        _display.display();
+    }
 
     // NeoPixel LEDの初期化と初期色の設定
     _statusLed.begin();
@@ -234,6 +272,11 @@ void HardwareManager::updateStatusLed(bool wifiEnabled, bool wifiConnected) {
     }
 }
 
+bool HardwareManager::probeDevice(uint8_t address) {
+    Wire.beginTransmission(address);
+    return (Wire.endTransmission() == 0);
+}
+
 /**
  * @brief I2Cバス上のデバイスをスキャンし、見つかったデバイスのアドレスをリストアップします。
  * @param foundDevices 見つかったデバイスのアドレスを格納する配列。
@@ -310,20 +353,23 @@ bool HardwareManager::getMPU6050Data(float accel[3], float gyro[3]) {
 }
 
 /**
- * @brief VL53L0X距離センサーから距離データを読み取ります。
+ * @brief VL53L1X距離センサーから距離データを読み取ります。
  * @param mm 読み取られた距離 (ミリメートル) を格納するuint16_t参照変数。
- * @return VL53L0Xが初期化されており、有効な距離データが読み取れた場合はtrue、それ以外はfalse。
- * @note 距離測定が失敗した場合 (RangeStatus == 4) はfalseを返します。
+ * @return VL53L1Xが初期化されており、有効な距離データが読み取れた場合はtrue、それ以外はfalse。
  */
-bool HardwareManager::getVL53L0XDistance(uint16_t &mm) {
+bool HardwareManager::getVL53L1XDistance(uint16_t &mm) {
     if (!_vl53Init) return false;
-    VL53L0X_RangingMeasurementData_t measure;
-    _vl53.rangingTest(&measure, false);
-    if (measure.RangeStatus != 4) {
-        mm = measure.RangeMilliMeter;
-        return true;
+    
+    if (_vl53.dataReady()) { // データが準備できているか確認
+        int16_t distance = _vl53.distance();
+        _vl53.clearInterrupt(); // 次の測定のためにインタラプトをクリア
+
+        if (distance >= 0) {
+            mm = (uint16_t)distance;
+            return true;
+        }
     }
-    return false;
+    return false; // データが準備できていない、またはエラー時はfalseを返す
 }
 
 /**
