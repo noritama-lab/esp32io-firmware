@@ -33,7 +33,7 @@ JSON を送るだけで ESP32-S3 の I/O を操作できます。
 - HTTP JSON API  
 - Wi-Fi STA & AP モード  
 - mDNS サポート  
-- NeoPixel 状態表示 LED (GPIO48)  
+- NeoPixel 状態表示 LED (GPIO38)  
 - I2C 拡張サポート  
 - BME280 / MPU6050 / VL53L1X / SSD1306 対応  
 - BOOTボタン長押しでファクトリーリセット  
@@ -48,10 +48,27 @@ JSON を送るだけで ESP32-S3 の I/O を操作できます。
 | Digital Input | 0–5 | 4, 5, 6, 7, 8, 9 |
 | Digital Output | 0–5 | 10, 11, 12, 13, 14, 15 |
 | ADC Input | 0–1 | 1, 2 |
-| PWM Output | 0–1 | 38, 39 |
-| Status LED | - | 48 |
+| PWM Output | 0–1 | 36, 37 |
+| Status LED | - | 38 |
 | I2C (SDA, SCL) | - | 40, 41 |
 | Reset Button | - | 0 (BOOT) |
+
+---
+
+## 必要ライブラリ (Arduino Library Manager)
+
+- ArduinoJson (v7)
+- Adafruit BME280 / MPU6050 / SSD1306 / VL53L1X 各ライブラリ
+
+---
+
+## セットアップ手順
+
+1. デバイス起動後、`ESP32_S3_IO_<MACサフィックス>` という名前のWiFi APが立ち上がります（パスワード: `esp32setup`）。
+2. AP に接続し、ブラウザで `http://192.168.4.1/` を開きます。
+3. WiFi SSID/パスワードなどを入力して保存すると、デバイスが再起動してWiFiに接続します。
+4. 接続後は `http://<device_ip>/` または `http://ESP32_S3_IO_XXXXXX.local/` から設定ページとセンサーモニターにアクセスできます。
+5. USBシリアル（115200bps）でも、Wi-Fi設定なしにJSONコマンドをそのまま送受信できます。
 
 ---
 
@@ -63,36 +80,8 @@ JSON を送るだけで ESP32-S3 の I/O を操作できます。
 {"cmd":"command_name", ...}
 ```
 
-### Digital IO
-- `read_di`  
-- `set_do`
-
-### ADC
-- `read_adc`
-
-### PWM
-- `set_pwm`  
-- `set_pwm_config`  
-- `get_pwm_config`
-
-### I2C / Sensors / Display
-- `i2c_scan`  
-- `i2c_write`  
-- `i2c_read`  
-- `get_sensors`  
-- `set_oled`
-
-### LED
-- `set_rgb`  
-- `led_off`  
-- `set_led_mode`  
-- `get_led_state`
-
-### System
-- `get_io_state`  
-- `get_status`  
-- `ping`  
-- `help`
+コマンド一覧（`read_di` / `set_do` / `get_io_state` / `read_adc` / `set_pwm` / `get_pwm_config` / `set_pwm_config` / `i2c_scan` / `i2c_write` / `i2c_read` / `get_sensors` / `set_oled` / `set_rgb` / `led_off` / `set_led_mode` / `get_led_state` / `get_status` / `ping` / `help`）とパラメータ・レスポンスの詳細は、
+**[COMMAND_REFERENCE.md](COMMAND_REFERENCE.md)** を参照してください。
 
 ---
 
@@ -170,10 +159,27 @@ Related Project:
 | Digital Input | 0–5 | 4, 5, 6, 7, 8, 9 |
 | Digital Output | 0–5 | 10, 11, 12, 13, 14, 15 |
 | ADC Input | 0–1 | 1, 2 |
-| PWM Output | 0–1 | 38, 39 |
-| Status LED | - | 48 |
+| PWM Output | 0–1 | 36, 37 |
+| Status LED | - | 38 |
 | I2C (SDA, SCL) | - | 40, 41 |
 | Reset Button | - | 0 (BOOT) |
+
+---
+
+## Required Libraries (Arduino Library Manager)
+
+- ArduinoJson (v7)
+- Adafruit BME280 / MPU6050 / SSD1306 / VL53L1X libraries
+
+---
+
+## Setup
+
+1. On boot, the device starts a WiFi AP named `ESP32_S3_IO_<MAC suffix>` (password: `esp32setup`).
+2. Connect to the AP and open `http://192.168.4.1/` in a browser.
+3. Enter your WiFi SSID/password and save; the device restarts and connects to WiFi.
+4. Once connected, the config page and sensor monitor are available at `http://<device_ip>/` or `http://ESP32_S3_IO_XXXXXX.local/`.
+5. USB Serial (115200bps) also works out of the box for sending/receiving JSON commands without any WiFi setup.
 
 ---
 
@@ -185,36 +191,7 @@ All commands follow this format:
 {"cmd":"command_name", ...}
 ```
 
-### Digital IO
-- `read_di`
-- `set_do`
-
-### ADC
-- `read_adc`
-
-### PWM
-- `set_pwm`
-- `set_pwm_config`
-- `get_pwm_config`
-
-### I2C / Sensors / Display
-- `i2c_scan`
-- `i2c_write`
-- `i2c_read`
-- `get_sensors`
-- `set_oled`
-
-### LED
-- `set_rgb`
-- `led_off`
-- `set_led_mode`
-- `get_led_state`
-
-### System
-- `get_io_state`
-- `get_status`
-- `ping`
-- `help`
+See **[COMMAND_REFERENCE.md](COMMAND_REFERENCE.md)** for the full list of commands (`read_di` / `set_do` / `get_io_state` / `read_adc` / `set_pwm` / `get_pwm_config` / `set_pwm_config` / `i2c_scan` / `i2c_write` / `i2c_read` / `get_sensors` / `set_oled` / `set_rgb` / `led_off` / `set_led_mode` / `get_led_state` / `get_status` / `ping` / `help`) with parameters and response formats.
 
 ---
 
