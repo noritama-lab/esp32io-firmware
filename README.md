@@ -7,6 +7,10 @@ JSON-based USB Serial and HTTP Remote I/O firmware for ESP32-S3.
 
 # 日本語版
 
+> ⚠️ **開発終了のお知らせ**
+> 本リポジトリ（HTTP版）の開発は終了しました。今後は MQTT版へ移行してください。
+> → https://github.com/noritama-lab/esp32io-mqtt-firmware
+
 ## 概要
 
 **ESP32-S3 Remote I/O Firmware** は、USBシリアルまたは HTTP 経由で  
@@ -121,6 +125,10 @@ Copyright (c) 2026 Noritama-Lab
 ---
 
 # English Version
+
+> ⚠️ **Development of this repository (HTTP version) has ended.**
+> Please migrate to the MQTT version going forward.
+> → https://github.com/noritama-lab/esp32io-mqtt-firmware
 
 ## Overview
 
